@@ -26,11 +26,13 @@ def create_tables() -> None:
     if settings.database_url.startswith("sqlite:///./"):
         Path("data").mkdir(parents=True, exist_ok=True)
 
-    from app.models import action_log, contact, email, task  # noqa: F401
+    from app.models import attachment, action_log, contact, email, task, user  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _ensure_email_columns()
     _ensure_task_columns()
+    _ensure_attachment_columns()
+    _ensure_action_log_columns()
 
 
 def _ensure_email_columns() -> None:
@@ -49,6 +51,21 @@ def _ensure_email_columns() -> None:
         "spam_reason": "TEXT",
         "applied_rules_json": "TEXT",
         "focus_flag": "BOOLEAN NOT NULL DEFAULT 0",
+        "detected_source_language": "VARCHAR(10)",
+        "preferred_reply_language": "VARCHAR(10)",
+        "mailbox_id": "VARCHAR(100)",
+        "mailbox_name": "VARCHAR(255)",
+        "mailbox_address": "VARCHAR(255)",
+        "has_attachments": "BOOLEAN NOT NULL DEFAULT 0",
+        "assigned_to_user_id": "INTEGER",
+        "assigned_by_user_id": "INTEGER",
+        "assigned_at": "DATETIME",
+        "sent_review_summary": "TEXT",
+        "sent_review_status": "VARCHAR(50)",
+        "sent_review_issues_json": "TEXT",
+        "sent_review_score": "FLOAT",
+        "sent_review_suggested_improvement": "TEXT",
+        "sent_reviewed_at": "DATETIME",
     }
 
     with engine.begin() as connection:
@@ -71,6 +88,9 @@ def _ensure_task_columns() -> None:
         "closed_at": "DATETIME",
         "close_reason": "VARCHAR(255)",
         "followup_draft": "TEXT",
+        "assigned_to_user_id": "INTEGER",
+        "assigned_by_user_id": "INTEGER",
+        "assigned_at": "DATETIME",
     }
 
     with engine.begin() as connection:
@@ -78,6 +98,41 @@ def _ensure_task_columns() -> None:
             if column_name in existing_columns:
                 continue
             connection.execute(text(f"ALTER TABLE tasks ADD COLUMN {column_name} {column_sql}"))
+
+
+def _ensure_attachment_columns() -> None:
+    inspector = inspect(engine)
+    if "attachments" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("attachments")}
+    required_columns = {
+        "content_id": "VARCHAR(255)",
+        "is_inline": "BOOLEAN NOT NULL DEFAULT 0",
+    }
+
+    with engine.begin() as connection:
+        for column_name, column_sql in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            connection.execute(text(f"ALTER TABLE attachments ADD COLUMN {column_name} {column_sql}"))
+
+
+def _ensure_action_log_columns() -> None:
+    inspector = inspect(engine)
+    if "action_log" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("action_log")}
+    required_columns = {
+        "user_id": "INTEGER",
+    }
+
+    with engine.begin() as connection:
+        for column_name, column_sql in required_columns.items():
+            if column_name in existing_columns:
+                continue
+            connection.execute(text(f"ALTER TABLE action_log ADD COLUMN {column_name} {column_sql}"))
 
 
 def get_db() -> Generator:

@@ -8,10 +8,13 @@ from pydantic import BaseModel, ValidationError, field_validator
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.models.contact import Contact
 from app.models.action_log import ActionLog
 from app.models.email import Email
+from app.services.language_service import choose_reply_language, normalize_language, update_email_languages
 from app.services.preference_profile import build_preference_prompt_block, get_preference_profile
 from app.services.rule_engine import apply_rules_to_email, is_trusted_sender
+from app.services.template_service import get_template, render_template_context
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,35 @@ class AnalyzePendingSummary:
     failed_count: int
     skipped_count: int
     errors: list[str]
+
+
+class DraftResponse(BaseModel):
+    draft_reply: str
+    subject: str | None = None
+    target_language: str
+
+    @field_validator("draft_reply", mode="before")
+    @classmethod
+    def validate_draft_reply(cls, value: object) -> str:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        raise ValueError("draft_reply is required")
+
+    @field_validator("subject", mode="before")
+    @classmethod
+    def normalize_subject(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return str(value)
+
+    @field_validator("target_language", mode="before")
+    @classmethod
+    def validate_language(cls, value: object) -> str:
+        normalized = normalize_language(str(value) if value is not None else None)
+        return normalized or "ru"
 
 
 def build_system_prompt(config, preference_block: str | None = None) -> str:
@@ -274,6 +306,10 @@ def analyze_pending(db_session: Session, config, limit: int | None = None) -> An
 
 
 def save_analysis_result(db_session: Session, email_record: Email, analysis_result: AnalysisResult) -> None:
+    contact = None
+    if email_record.sender_email:
+        contact = db_session.query(Contact).filter(Contact.email == email_record.sender_email).first()
+    update_email_languages(email_record, contact=contact)
     email_record.ai_summary = analysis_result.summary
     email_record.priority = analysis_result.priority
     email_record.category = analysis_result.category
@@ -316,6 +352,111 @@ def save_analysis_result(db_session: Session, email_record: Email, analysis_resu
     apply_rules_to_email(db_session, email_record, source="ai")
     db_session.commit()
     db_session.refresh(email_record)
+
+
+def generate_personalized_draft(
+    email_record: Email,
+    thread_history: list[Email],
+    config,
+    target_language: str | None = None,
+    template_id: str | None = None,
+    tone: str | None = None,
+    length: str | None = None,
+    preference_block: str | None = None,
+) -> DraftResponse:
+    language = choose_reply_language(email_record, explicit_language=target_language)
+    template = get_template(template_id) if template_id else None
+    system_prompt = (
+        "You are an email assistant for Orhun Medical in Kazakhstan. "
+        "Generate a professional business email draft in the requested target language. "
+        "If a template is provided, preserve its intention and structure while personalizing it to the thread. "
+        "Always return JSON only."
+    )
+    if preference_block:
+        system_prompt = f"{system_prompt}\n\n{preference_block}"
+
+    payload = {
+        "task": "generate_personalized_draft",
+        "target_language": language,
+        "tone": tone or "professional",
+        "length": length or "medium",
+        "current_email": {
+            "subject": email_record.subject,
+            "sender_name": email_record.sender_name,
+            "sender_email": email_record.sender_email,
+            "body_text": _truncate(email_record.body_text, 5000),
+            "ai_summary": email_record.ai_summary,
+            "detected_source_language": email_record.detected_source_language,
+        },
+        "thread_history": [
+            {
+                "subject": item.subject,
+                "sender_email": item.sender_email,
+                "body_text": _truncate(item.body_text, 1400),
+                "date_received": item.date_received.isoformat() if item.date_received else None,
+            }
+            for item in thread_history[:5]
+        ],
+        "template_context": render_template_context(
+            template,
+            {
+                "subject": email_record.subject,
+                "recipient_name": email_record.sender_name or email_record.sender_email or "colleague",
+            },
+        ) if template else None,
+        "expected_json_schema": {
+            "draft_reply": "personalized business email draft",
+            "subject": "reply subject or null",
+            "target_language": language,
+        },
+    }
+    response_text = _call_model_once(
+        system_prompt=system_prompt,
+        user_payload=json.dumps(payload, ensure_ascii=False),
+        config=config,
+    )
+    return DraftResponse.model_validate(_extract_json_object(response_text))
+
+
+def rewrite_draft(
+    email_record: Email,
+    current_draft: str,
+    instruction: str,
+    config,
+    target_language: str | None = None,
+    preference_block: str | None = None,
+) -> DraftResponse:
+    language = choose_reply_language(email_record, explicit_language=target_language)
+    system_prompt = (
+        "You are an email assistant for Orhun Medical in Kazakhstan. "
+        "Rewrite the provided draft according to the user instruction. "
+        "Keep the business intent intact, preserve important facts, and return JSON only."
+    )
+    if preference_block:
+        system_prompt = f"{system_prompt}\n\n{preference_block}"
+    payload = {
+        "task": "rewrite_draft",
+        "target_language": language,
+        "instruction": instruction,
+        "current_email": {
+            "subject": email_record.subject,
+            "sender_name": email_record.sender_name,
+            "sender_email": email_record.sender_email,
+            "ai_summary": email_record.ai_summary,
+        },
+        "draft": current_draft,
+        "expected_json_schema": {
+            "draft_reply": "rewritten business email draft",
+            "subject": "updated subject or null",
+            "target_language": language,
+        },
+    }
+    response_text = _call_model_once(
+        system_prompt=system_prompt,
+        user_payload=json.dumps(payload, ensure_ascii=False),
+        config=config,
+    )
+    return DraftResponse.model_validate(_extract_json_object(response_text))
 
 
 def _call_model_once(system_prompt: str, user_payload: str, config) -> str:

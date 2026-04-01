@@ -14,6 +14,15 @@ class SendReplyResult:
     error: str | None = None
 
 
+@dataclass(slots=True)
+class SendEmailResult:
+    status: str
+    message_id: str
+    recipients: list[str]
+    subject: str
+    error: str | None = None
+
+
 def send_reply(
     to: list[str],
     subject: str,
@@ -26,7 +35,8 @@ def send_reply(
 ) -> SendReplyResult:
     if not to:
         raise ValueError("At least one recipient is required")
-    if not config.smtp_host or not config.smtp_user or not config.smtp_password:
+    smtp_username = getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None)
+    if not config.smtp_host or not smtp_username or not config.smtp_password:
         raise ValueError("SMTP credentials are not fully configured")
 
     cc = cc or []
@@ -36,7 +46,7 @@ def send_reply(
         raise ValueError("No valid recipients were provided")
 
     message = EmailMessage()
-    message["From"] = config.smtp_user
+    message["From"] = getattr(config, "email_address", None) or smtp_username
     message["To"] = ", ".join(to)
     if cc:
         message["Cc"] = ", ".join(cc)
@@ -67,7 +77,7 @@ def _deliver_message(message: EmailMessage, recipients: list[str], config) -> No
 
     if getattr(config, "smtp_use_ssl", False):
         with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, context=context, timeout=30) as server:
-            server.login(config.smtp_user, config.smtp_password)
+            server.login(getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None), config.smtp_password)
             server.send_message(message, to_addrs=recipients)
         return
 
@@ -76,5 +86,43 @@ def _deliver_message(message: EmailMessage, recipients: list[str], config) -> No
         if getattr(config, "smtp_use_tls", True):
             server.starttls(context=context)
             server.ehlo()
-        server.login(config.smtp_user, config.smtp_password)
+        server.login(getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None), config.smtp_password)
         server.send_message(message, to_addrs=recipients)
+
+
+def send_email(
+    *,
+    to: list[str],
+    subject: str,
+    body: str,
+    config,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+) -> SendEmailResult:
+    if not to:
+        raise ValueError("At least one recipient is required")
+    smtp_username = getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None)
+    if not config.smtp_host or not smtp_username or not config.smtp_password:
+        raise ValueError("SMTP credentials are not fully configured")
+
+    cc = cc or []
+    bcc = bcc or []
+    recipients = [address for address in [*to, *cc, *bcc] if address]
+    if not recipients:
+        raise ValueError("No valid recipients were provided")
+
+    message = EmailMessage()
+    message["From"] = getattr(config, "email_address", None) or smtp_username
+    message["To"] = ", ".join(to)
+    if cc:
+        message["Cc"] = ", ".join(cc)
+    message["Subject"] = subject
+    message["Message-ID"] = make_msgid()
+    message.set_content(body)
+    _deliver_message(message, recipients, config)
+    return SendEmailResult(
+        status="sent",
+        message_id=message["Message-ID"],
+        recipients=recipients,
+        subject=subject,
+    )

@@ -6,3 +6,6 @@ pydantic-settings
 python-dotenv
 openai
 apscheduler
+pytest
+httpx
+reportlab

@@ -18,11 +18,17 @@ class SpamReviewResult:
     spam_reason: str | None
 
 
-def list_spam_emails(db_session: Session, limit: int = 100, offset: int = 0) -> list[Email]:
+def list_spam_emails(
+    db_session: Session,
+    limit: int = 100,
+    offset: int = 0,
+    mailbox_id: str | None = None,
+) -> list[Email]:
+    query = db_session.query(Email).filter(Email.is_spam.is_(True))
+    if mailbox_id:
+        query = query.filter(Email.mailbox_id == mailbox_id)
     emails = (
-        db_session.query(Email)
-        .filter(Email.is_spam.is_(True))
-        .order_by(Email.updated_at.desc(), Email.date_received.desc().nullslast(), Email.id.desc())
+        query.order_by(Email.updated_at.desc(), Email.date_received.desc().nullslast(), Email.id.desc())
         .offset(offset)
         .limit(limit)
         .all()

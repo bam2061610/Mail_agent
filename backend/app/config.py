@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     scan_interval_minutes: int = Field(default=5, alias="SCAN_INTERVAL_MINUTES")
     followup_overdue_days: int = Field(default=3, alias="FOLLOWUP_OVERDUE_DAYS")
+    catchup_absence_hours: int = Field(default=8, alias="CATCHUP_ABSENCE_HOURS")
+    sent_review_batch_limit: int = Field(default=20, alias="SENT_REVIEW_BATCH_LIMIT")
     cors_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost:5173"],
         alias="CORS_ORIGINS",

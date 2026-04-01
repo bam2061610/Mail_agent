@@ -11,6 +11,9 @@ class EmailListItem(BaseModel):
     subject: str | None = None
     sender_email: str | None = None
     sender_name: str | None = None
+    mailbox_id: str | None = None
+    mailbox_name: str | None = None
+    mailbox_address: str | None = None
     date_received: datetime | None = None
     status: str
     priority: str | None = None
@@ -24,8 +27,21 @@ class EmailListItem(BaseModel):
     focus_flag: bool = False
     spam_action_at: datetime | None = None
     spam_action_actor: str | None = None
+    detected_source_language: str | None = None
+    preferred_reply_language: str | None = None
+    has_attachments: bool = False
+    attachment_count: int = 0
     waiting_state: str | None = None
     wait_days: int | None = None
+    assigned_to_user_id: int | None = None
+    assigned_by_user_id: int | None = None
+    assigned_at: datetime | None = None
+    sent_review_summary: str | None = None
+    sent_review_status: str | None = None
+    sent_review_issues_json: str | None = None
+    sent_review_score: float | None = None
+    sent_review_suggested_improvement: str | None = None
+    sent_reviewed_at: datetime | None = None
 
 
 class EmailDetail(EmailListItem):
@@ -122,3 +138,42 @@ class FeedbackResponse(BaseModel):
     status: str
     action_types: list[str] = Field(default_factory=list)
     inferred_tags: list[str] = Field(default_factory=list)
+
+
+class EmailGenerateDraftRequest(BaseModel):
+    target_language: str | None = None
+    template_id: str | None = None
+    tone: str | None = None
+    length: str | None = None
+
+
+class EmailRewriteDraftRequest(BaseModel):
+    current_draft: str
+    instruction: str
+    target_language: str | None = None
+
+
+class EmailSetReplyLanguageRequest(BaseModel):
+    language: str
+
+
+class DraftGenerationResponse(BaseModel):
+    draft_reply: str
+    subject: str | None = None
+    target_language: str
+    template_id: str | None = None
+
+
+class AttachmentItem(BaseModel):
+    id: int
+    email_id: int
+    filename: str | None = None
+    content_type: str | None = None
+    size_bytes: int
+    content_id: str | None = None
+    is_inline: bool = False
+    created_at: datetime
+
+
+class EmailAssignRequest(BaseModel):
+    user_id: int
