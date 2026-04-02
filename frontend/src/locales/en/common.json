@@ -1,0 +1,160 @@
+{
+  "app": {
+    "name": "Orhun Mail Agent",
+    "tagline": "Action dashboard for intake, drafting, automation, and review control.",
+    "workspace": "Workspace",
+    "logout": "Logout",
+    "signingOut": "Signing out...",
+    "allMailboxes": "All mailboxes",
+    "contactsLoaded": "{{count}} key contacts loaded",
+    "focus": "focus",
+    "mobileMenu": "Menu"
+  },
+  "auth": {
+    "checking": "Checking authentication...",
+    "teamLogin": "Team login",
+    "signinHint": "Sign in to access Orhun Mail Agent workspace.",
+    "email": "Email",
+    "password": "Password",
+    "signingIn": "Signing in...",
+    "signin": "Sign in / Войти",
+    "defaultCreds": "Default credentials on first run: admin@orhun.local / admin123"
+  },
+  "nav": {
+    "focus": "Focus",
+    "active": "Active Queue",
+    "sent": "Sent",
+    "waiting": "Waiting Queue",
+    "spam": "Spam Log",
+    "reports": "Reports",
+    "settings": "Settings"
+  },
+  "sent": {
+    "title": "Sent mailbox",
+    "subtitle": "Review outbound messages and jump into full thread context.",
+    "searchPlaceholder": "Search subject, sender, summary, mailbox",
+    "emptyTitle": "No sent messages",
+    "emptySubtitle": "Outbound emails will appear here after replies are sent.",
+    "direction": "outbound"
+  },
+  "sidebar": {
+    "checkNow": "Check now",
+    "checkDesc": "Run inbox scan and AI analysis on demand.",
+    "scanNow": "Scan now",
+    "checking": "Checking...",
+    "viewerReadonly": "Viewer role can monitor data but cannot trigger scans.",
+    "rules": "Automation rules",
+    "rulesDesc": "{{count}} active rules are shaping focus, priority, archive, and spam review."
+  },
+  "queue": {
+    "searchPlaceholder": "Search sender, subject, summary, attachment name",
+    "needsReply": "Needs reply",
+    "focusSenders": "Focus senders",
+    "waiting": "Waiting",
+    "allActive": "All active",
+    "clear": "Queue is clear",
+    "clearDesc": "No active items match the current filter.",
+    "unknownSender": "Unknown sender",
+    "noSubject": "No subject",
+    "noPreview": "No preview available.",
+    "waitDays": "{{count}}d wait",
+    "attachments": "attachments {{count}}",
+    "owner": "owner #{{id}}"
+  },
+  "detail": {
+    "title": "Thread detail",
+    "subtitle": "Review context, draft, and action groups before responding.",
+    "loading": "Loading detail...",
+    "selectItem": "Select an item",
+    "selectItemDesc": "Pick a thread from the queue to review the draft workflow.",
+    "assignment": "Assignment",
+    "assigned": "Assigned to #{{id}}",
+    "unassigned": "Unassigned",
+    "assignTo": "Assign to user",
+    "unassign": "Unassign",
+    "aiSummary": "AI summary",
+    "noAnalysis": "Analysis is not available for this item yet.",
+    "thread": "Thread",
+    "attachmentsTitle": "Attachments",
+    "noAttachments": "No attachments for this email.",
+    "download": "Download",
+    "draftTitle": "Draft reply",
+    "followupDraftTitle": "Follow-up / reply draft",
+    "detected": "Detected",
+    "reply": "Reply",
+    "chars": "{{count}} chars",
+    "noTemplate": "No template",
+    "generateDraft": "Generate draft",
+    "generating": "Generating...",
+    "translateRu": "Translate to RU",
+    "translateEn": "Translate to EN",
+    "translateTr": "Translate to TR",
+    "draftPlaceholder": "Draft reply...",
+    "sendDraft": "Send draft",
+    "sending": "Sending...",
+    "actionMenu": "Workflow actions",
+    "rewriteMenu": "Rewrite shortcuts",
+    "rulesMenu": "Rule shortcuts",
+    "closeWaiting": "Close waiting",
+    "waitingForReply": "Waiting for reply",
+    "archive": "Archive",
+    "replyMyself": "I will reply myself",
+    "markSpam": "Mark spam",
+    "restoreActive": "Restore to active",
+    "confirmSpam": "Confirm spam",
+    "later": "Later / snooze",
+    "viewerHelp": "Viewer role is read-only. Ask a manager/admin to assign or action this thread.",
+    "backToList": "Back to list",
+    "markImportant": "Mark important",
+    "notImportant": "Not important",
+    "summaryHelpful": "Summary helpful",
+    "summaryOff": "Summary off",
+    "draftHelpful": "Draft helpful",
+    "draftNeedsWork": "Draft needs work",
+    "summaryHeading": "Summary",
+    "originalMessage": "Original message"
+  },
+  "waitingPanel": {
+    "title": "Waiting queue",
+    "subtitle": "Tracked conversations waiting for the other side. Overdue items should be followed up first.",
+    "none": "No waiting threads",
+    "noneDesc": "Threads marked as waiting for reply will appear here.",
+    "openThread": "Open thread",
+    "due": "Due {{date}}"
+  },
+  "settings": {
+    "language": "Language",
+    "english": "English",
+    "russian": "Русский"
+  },
+  "views": {
+    "focus": {
+      "title": "Focus workspace",
+      "subtitle": "{{focusSummary}}"
+    },
+    "active": {
+      "title": "Active queue",
+      "subtitle": "Move from AI analysis to a sent reply without leaving the board."
+    },
+    "sent": {
+      "title": "Sent mailbox",
+      "subtitle": "Browse outbound threads, review summaries, and reopen context fast."
+    },
+    "waiting": {
+      "title": "Waiting queue",
+      "subtitle": "Track outbound conversations, overdue threads, and suggested follow-ups."
+    },
+    "spam": {
+      "title": "Spam review log",
+      "subtitle": "Audit blocked messages, see AI or rule source, and restore mistakes quickly."
+    },
+    "reports": {
+      "title": "Reports and exports",
+      "subtitle": "Generate period-based activity and follow-up reports, then export or email them."
+    },
+    "settings": {
+      "title": "System settings",
+      "subtitle": "Manage connection settings, learned preferences, and operational rules."
+    }
+  }
+}

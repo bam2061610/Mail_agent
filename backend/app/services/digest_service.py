@@ -8,6 +8,7 @@ from app.config import DATA_DIR
 from app.models.action_log import ActionLog
 from app.models.email import Email
 from app.models.task import Task
+from app.services.mailbox_service import SENT_DIRECTION_VALUES
 
 STATE_FILE_PATH = DATA_DIR / "digest_state.json"
 
@@ -82,7 +83,7 @@ def generate_catchup_digest(db_session: Session, config, now: datetime | None = 
     recent_sent_rows = (
         db_session.query(Email)
         .filter(
-            Email.direction == "sent",
+            Email.direction.in_(SENT_DIRECTION_VALUES),
             Email.date_received.is_not(None),
             Email.date_received >= since,
         )

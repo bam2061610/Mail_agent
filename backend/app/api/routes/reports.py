@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -13,15 +14,18 @@ from app.services.export_service import export_report
 from app.services.mailbox_service import get_default_runtime_mailbox_from_settings
 from app.services.permission_service import require_permission
 from app.services.report_service import (
+    build_report_email_body,
     build_activity_report,
     build_followup_report,
     build_sent_review_report,
     build_team_activity_report,
+    normalize_recipient_addresses,
     parse_report_filters,
 )
-from app.services.smtp_sender import send_email
+from app.services.mail.smtp_send import send_email
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/activity", response_model=ReportResponse)
@@ -211,34 +215,65 @@ def send_report_email(
     else:
         raise HTTPException(status_code=400, detail="Unsupported report_type")
 
+    to_addresses = normalize_recipient_addresses(request.to)
+    cc_addresses = normalize_recipient_addresses(request.cc)
+    bcc_addresses = normalize_recipient_addresses(request.bcc)
+    if not to_addresses:
+        raise HTTPException(status_code=422, detail="At least one recipient email is required")
+
     smtp_config = get_default_runtime_mailbox_from_settings() or get_effective_settings()
+    smtp_username = getattr(smtp_config, "smtp_username", None) or getattr(smtp_config, "smtp_user", None)
+    if not getattr(smtp_config, "smtp_host", None) or not smtp_username:
+        raise HTTPException(status_code=422, detail="SMTP is not configured for report delivery")
     subject = f"Orhun Mail Agent report: {payload.get('report_type')} ({payload.get('generated_at')})"
-    summary_lines = [f"{key}: {value}" for key, value in (payload.get("summary") or {}).items()]
-    body = "Report summary\n\n" + "\n".join(summary_lines[:30])
-    result = send_email(
-        to=request.to,
-        cc=request.cc,
-        bcc=request.bcc,
-        subject=subject,
-        body=body,
-        config=smtp_config,
-    )
+    body = build_report_email_body(payload)
+    try:
+        result = send_email(
+            to=to_addresses,
+            cc=cc_addresses,
+            bcc=bcc_addresses,
+            subject=subject,
+            body=body,
+            config=smtp_config,
+        )
+    except ValueError as exc:
+        logger.warning("Report email validation failed: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception(
+            "Report email delivery failed: report_type=%s recipients=%s cc=%s bcc_count=%s",
+            payload.get("report_type"),
+            to_addresses,
+            cc_addresses,
+            len(bcc_addresses),
+        )
+        raise HTTPException(status_code=502, detail="Could not send report email due to SMTP delivery failure") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "Unexpected report email failure: report_type=%s recipients=%s cc=%s bcc_count=%s",
+            payload.get("report_type"),
+            to_addresses,
+            cc_addresses,
+            len(bcc_addresses),
+        )
+        raise HTTPException(status_code=502, detail="Could not send report email due to unexpected delivery failure") from exc
+
     _log_report_action(
         db,
         current_user,
         "report_emailed",
         {
             "report_type": payload.get("report_type"),
-            "recipients": request.to,
-            "cc": request.cc,
-            "bcc_count": len(request.bcc),
+            "recipients": to_addresses,
+            "cc": cc_addresses,
+            "bcc_count": len(bcc_addresses),
             "message_id": result.message_id,
             "filters": payload.get("filters"),
         },
     )
     return ReportSendResponse(
         report_type=payload.get("report_type", report_type),
-        recipients=request.to,
+        recipients=to_addresses,
         subject=subject,
     )
 

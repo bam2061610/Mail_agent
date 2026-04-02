@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.models.action_log import ActionLog
 from app.models.email import Email
+from app.services.mailbox_service import SENT_DIRECTION_VALUES
 from app.services.preference_profile import get_preference_profile
 
 logger = logging.getLogger(__name__)
@@ -84,7 +85,7 @@ def review_pending_sent(db_session: Session, config, limit: int | None = None) -
     query = (
         db_session.query(Email)
         .filter(
-            Email.direction == "sent",
+            Email.direction.in_(SENT_DIRECTION_VALUES),
             or_(Email.sent_review_status.is_(None), Email.sent_review_status.in_(["pending"])),
         )
         .order_by(Email.date_received.desc().nullslast(), Email.id.desc())

@@ -12,6 +12,31 @@ logger = logging.getLogger(__name__)
 
 MAILBOXES_FILE_PATH = DATA_DIR / "mailboxes.json"
 SECRET_FIELDS = {"imap_password", "smtp_password"}
+SENT_FOLDER_HINTS = ("sent", "outbox")
+SENT_DIRECTION_VALUES = ("sent", "outbound")
+
+
+def is_sent_folder(folder_name: str | None) -> bool:
+    if not folder_name:
+        return False
+    normalized = folder_name.strip().lower()
+    return any(hint in normalized for hint in SENT_FOLDER_HINTS)
+
+
+def is_outgoing_direction(direction: str | None) -> bool:
+    if not direction:
+        return False
+    return direction.strip().lower() in SENT_DIRECTION_VALUES
+
+
+def get_thread_lookup_keys(email) -> list[str]:
+    keys: list[str] = []
+    for value in [getattr(email, "thread_id", None), getattr(email, "message_id", None)]:
+        normalized = (value or "").strip()
+        if not normalized or normalized in keys:
+            continue
+        keys.append(normalized)
+    return keys
 
 
 def list_mailboxes(redact_secrets: bool = True) -> list[dict[str, Any]]:

@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -35,7 +36,11 @@ from app.schemas.email import (
 )
 from app.schemas.system import ErrorResponse
 from app.services.ai_analyzer import generate_followup_draft, generate_personalized_draft, rewrite_draft
-from app.services.attachment_service import get_attachment, get_attachment_file_path, list_email_attachments
+from app.services.attachment_service import (
+    build_attachment_download_payload,
+    get_attachment,
+    list_email_attachments,
+)
 from app.services.feedback_service import (
     infer_edit_type_tags,
     record_decision_feedback,
@@ -49,9 +54,15 @@ from app.services.followup_tracker import (
 )
 from app.services.preference_profile import build_preference_prompt_block, get_preference_profile, rebuild_preference_profile
 from app.services.spam_service import annotate_spam_review_metadata, confirm_email_spam, restore_email_from_spam
-from app.services.smtp_sender import send_reply
+from app.services.mail.smtp_send import send_reply
 from app.services.language_service import normalize_language
-from app.services.mailbox_service import get_outgoing_mailbox_for_email
+from app.services.mailbox_service import (
+    SENT_DIRECTION_VALUES,
+    get_outgoing_mailbox_for_email,
+    get_thread_lookup_keys,
+    is_outgoing_direction,
+    is_sent_folder,
+)
 from app.services.permission_service import require_permission
 from app.services.sent_review_service import (
     dismiss_sent_review,
@@ -63,12 +74,16 @@ from app.services.template_service import get_template
 
 router = APIRouter(prefix="/api/emails", tags=["emails"])
 ALLOWED_STATUSES = {"new", "read", "archived", "spam", "replied"}
+INBOUND_DIRECTION_VALUES = ("inbound", "incoming", "received")
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=list[EmailListItem])
 def list_emails(
     status: str | None = None,
     mailbox_id: str | None = None,
+    direction: str | None = None,
+    folder: str | None = None,
     priority: str | None = None,
     category: str | None = None,
     search: str | None = None,
@@ -84,6 +99,28 @@ def list_emails(
         query = query.filter(Email.status == status)
     if mailbox_id:
         query = query.filter(Email.mailbox_id == mailbox_id)
+    if direction:
+        normalized_direction = direction.strip().lower()
+        if normalized_direction in SENT_DIRECTION_VALUES:
+            query = query.filter(Email.direction.in_(SENT_DIRECTION_VALUES))
+        elif normalized_direction in INBOUND_DIRECTION_VALUES:
+            query = query.filter(Email.direction == "inbound")
+        else:
+            query = query.filter(Email.direction == normalized_direction)
+    if folder:
+        normalized_folder = folder.strip().lower()
+        if is_sent_folder(normalized_folder):
+            query = query.filter(
+                or_(
+                    Email.folder.ilike("%sent%"),
+                    Email.folder.ilike("%outbox%"),
+                    Email.direction.in_(SENT_DIRECTION_VALUES),
+                )
+            )
+        elif normalized_folder == "inbox":
+            query = query.filter(or_(Email.folder.ilike("%inbox%"), Email.direction == "inbound"))
+        else:
+            query = query.filter(Email.folder.ilike(normalized_folder))
     if priority:
         query = query.filter(Email.priority == priority)
     if category:
@@ -146,19 +183,16 @@ def get_email_thread(
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
 
-    thread_id = email.thread_id or email.message_id
-    if not thread_id:
+    thread_keys = get_thread_lookup_keys(email)
+    if not thread_keys:
         return EmailThreadResponse(thread_id=f"email-{email.id}", emails=[email])
 
-    thread_emails = (
-        db.query(Email)
-        .filter(or_(Email.thread_id == thread_id, Email.message_id == thread_id))
-        .order_by(Email.date_received.asc().nullsfirst(), Email.id.asc())
-        .all()
-    )
+    conditions = [Email.thread_id == key for key in thread_keys] + [Email.message_id == key for key in thread_keys]
+    thread_emails = db.query(Email).filter(or_(*conditions)).order_by(Email.date_received.asc().nullsfirst(), Email.id.asc()).all()
     if not thread_emails:
         thread_emails = [email]
 
+    thread_id = thread_keys[0]
     return EmailThreadResponse(thread_id=thread_id, emails=thread_emails)
 
 
@@ -183,16 +217,24 @@ def reply_to_email(
     references = _build_references(original_email)
     runtime_settings = get_effective_settings()
     outgoing_mailbox = get_outgoing_mailbox_for_email(original_email) or runtime_settings
-    send_result = send_reply(
-        to=to_addresses,
-        subject=subject,
-        body=request.body,
-        reply_to_message_id=original_email.message_id,
-        config=outgoing_mailbox,
-        cc=request.cc,
-        bcc=request.bcc,
-        references=references,
-    )
+    try:
+        send_result = send_reply(
+            to=to_addresses,
+            subject=subject,
+            body=request.body,
+            reply_to_message_id=original_email.message_id,
+            config=outgoing_mailbox,
+            cc=request.cc,
+            bcc=request.bcc,
+            references=references,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"SMTP delivery failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected send failure while replying to email_id=%s", email_id)
+        raise HTTPException(status_code=500, detail=f"Unexpected send failure: {exc}") from exc
 
     original_email.status = "replied"
     original_email.requires_reply = False
@@ -214,33 +256,14 @@ def reply_to_email(
             cc_json=json.dumps([{"email": address, "name": None} for address in request.cc], ensure_ascii=False),
             date_received=datetime.now(timezone.utc),
             body_text=request.body,
-            folder="sent",
-            direction="sent",
+            folder="Sent",
+            direction="outbound",
             status="replied",
             ai_analyzed=True,
+            sent_by_user_id=current_user.id,
             sent_review_status="pending",
         )
         db.add(sent_email)
-    original_draft = original_email.ai_draft_reply
-    draft_feedback = record_draft_feedback(
-        db_session=db,
-        email=original_email,
-        original_draft=original_draft,
-        final_draft=request.body,
-        edit_type_tags=infer_edit_type_tags(original_draft, request.body),
-        send_status="sent",
-        actor="user",
-    )
-
-    mark_thread_waiting(
-        db_session=db,
-        thread_id=thread_key,
-        started_at=datetime.now(timezone.utc),
-        email_id=original_email.id,
-        actor="api",
-    )
-
-    _upsert_contact(db, original_email.sender_email, original_email.sender_name, increment_sent=True)
     db.add(
         ActionLog(
             user_id=current_user.id,
@@ -260,29 +283,68 @@ def reply_to_email(
             ),
         )
     )
-    if previous_waiting_state is not None:
-        db.add(
-            ActionLog(
-                user_id=current_user.id,
-                email_id=original_email.id,
-                task_id=previous_waiting_state.task_id,
-                action_type="followup_sent",
-                actor=current_user.email,
-                details_json=json.dumps({"thread_id": thread_key}, ensure_ascii=False),
-            )
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.exception("Email was sent but DB commit failed for email_id=%s", email_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Email was sent via SMTP but local database update failed. Please refresh and verify Sent mailbox.",
+        ) from exc
+
+    try:
+        original_draft = original_email.ai_draft_reply
+        draft_feedback = record_draft_feedback(
+            db_session=db,
+            email=original_email,
+            original_draft=original_draft,
+            final_draft=request.body,
+            edit_type_tags=infer_edit_type_tags(original_draft, request.body),
+            send_status="sent",
+            actor="user",
         )
-    if draft_feedback.action_type == "draft_sent_after_edit":
-        db.add(
-            ActionLog(
-                user_id=current_user.id,
-                email_id=original_email.id,
-                action_type="rewrite_requested",
-                actor=current_user.email,
-                details_json=json.dumps({"edit_type_tags": draft_feedback.inferred_tags}, ensure_ascii=False),
-            )
+
+        mark_thread_waiting(
+            db_session=db,
+            thread_id=thread_key,
+            started_at=datetime.now(timezone.utc),
+            email_id=original_email.id,
+            actor="api",
         )
-    db.commit()
-    rebuild_preference_profile(db)
+
+        _upsert_contact(db, original_email.sender_email, original_email.sender_name, increment_sent=True)
+        if previous_waiting_state is not None:
+            db.add(
+                ActionLog(
+                    user_id=current_user.id,
+                    email_id=original_email.id,
+                    task_id=previous_waiting_state.task_id,
+                    action_type="followup_sent",
+                    actor=current_user.email,
+                    details_json=json.dumps({"thread_id": thread_key}, ensure_ascii=False),
+                )
+            )
+        if draft_feedback.action_type == "draft_sent_after_edit":
+            db.add(
+                ActionLog(
+                    user_id=current_user.id,
+                    email_id=original_email.id,
+                    action_type="rewrite_requested",
+                    actor=current_user.email,
+                    details_json=json.dumps({"edit_type_tags": draft_feedback.inferred_tags}, ensure_ascii=False),
+                )
+            )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("Post-send side effects failed for email_id=%s", email_id)
+
+    try:
+        rebuild_preference_profile(db)
+    except Exception:  # noqa: BLE001
+        logger.exception("Preference profile rebuild failed after reply for email_id=%s", email_id)
+
     db.refresh(original_email)
     waiting_state = get_thread_waiting_state(db, original_email.thread_id or original_email.message_id or "")
     setattr(original_email, "waiting_state", waiting_state.state if waiting_state else None)
@@ -299,7 +361,7 @@ def review_single_sent_email(
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
-    if email.direction != "sent":
+    if not is_outgoing_direction(email.direction):
         raise HTTPException(status_code=400, detail="Only sent emails can be reviewed")
     thread_history = (
         db.query(Email)
@@ -472,8 +534,9 @@ def download_attachment(
     attachment = get_attachment(db, attachment_id)
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    file_path = get_attachment_file_path(attachment)
-    if not file_path.exists():
+    try:
+        file_path, _, media_type, headers = build_attachment_download_payload(attachment)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Attachment file missing")
     db.add(
         ActionLog(
@@ -487,8 +550,8 @@ def download_attachment(
     db.commit()
     return FileResponse(
         path=str(file_path),
-        filename=attachment.filename or file_path.name,
-        media_type=attachment.content_type or "application/octet-stream",
+        media_type=media_type,
+        headers=headers,
     )
 
 

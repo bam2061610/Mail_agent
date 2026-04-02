@@ -1,9 +1,12 @@
 import hashlib
 import json
 import logging
+import mimetypes
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from email.message import Message
 from email.utils import collapse_rfc2231_value
@@ -121,6 +124,30 @@ def get_attachment_file_path(attachment: Attachment) -> Path:
     return Path(attachment.local_storage_path).resolve()
 
 
+def build_attachment_download_payload(attachment: Attachment) -> tuple[Path, str, str, dict[str, str]]:
+    file_path = get_attachment_file_path(attachment)
+    if not file_path.exists() or not file_path.is_file():
+        raise FileNotFoundError(str(file_path))
+
+    filename = (attachment.filename or file_path.name or "attachment").strip() or "attachment"
+    media_type = (
+        (attachment.content_type or "").strip()
+        or mimetypes.guess_type(filename)[0]
+        or "application/octet-stream"
+    )
+    headers = {
+        "Content-Disposition": build_content_disposition_header(filename),
+        "X-Content-Type-Options": "nosniff",
+    }
+    return file_path, filename, media_type, headers
+
+
+def build_content_disposition_header(filename: str) -> str:
+    safe_ascii = _ascii_fallback_filename(filename)
+    utf8_encoded = quote(filename, safe="")
+    return f'attachment; filename="{safe_ascii}"; filename*=UTF-8\'\'{utf8_encoded}'
+
+
 def _persist_attachment_bytes(storage_dir: Path, attachment: ParsedAttachment) -> Path:
     digest = hashlib.sha1(attachment.payload).hexdigest()[:14]
     safe_name = _sanitize_filename(attachment.filename)
@@ -148,6 +175,20 @@ def _sanitize_component(value: str) -> str:
 def _sanitize_filename(filename: str) -> str:
     name = _sanitize_component(filename.replace("\\", "-").replace("/", "-"))
     return name[:220]
+
+
+def _ascii_fallback_filename(filename: str) -> str:
+    normalized = unicodedata.normalize("NFKD", filename)
+    ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+    ascii_name = ascii_name.replace("\\", "-").replace("/", "-").replace('"', "")
+    ascii_name = _sanitize_component(ascii_name)
+    raw_suffix = Path(filename).suffix
+    suffix = f".{re.sub(r'[^A-Za-z0-9]+', '', raw_suffix)}" if raw_suffix else ""
+    if not ascii_name:
+        return f"attachment{suffix.lower()}" if suffix else "attachment"
+    if suffix and not ascii_name.lower().endswith(suffix.lower()):
+        return f"{ascii_name}{suffix.lower()}"
+    return ascii_name
 
 
 def _is_attachment_like(part: Message) -> bool:

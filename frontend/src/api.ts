@@ -110,6 +110,26 @@ export function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+export type ReplyRequestPayload = {
+  body: string;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  save_as_sent_record?: boolean;
+};
+
+export function buildReplyPayload(body: string, recipientEmail: string | null | undefined, subject?: string | null): ReplyRequestPayload {
+  const trimmedRecipient = (recipientEmail || "").trim();
+  const payload: ReplyRequestPayload = {
+    body,
+    save_as_sent_record: true,
+  };
+  if (trimmedRecipient) payload.to = [trimmedRecipient];
+  if ((subject || "").trim()) payload.subject = String(subject).trim();
+  return payload;
+}
+
 function shouldTryTokenRefresh(url: string): boolean {
   return !url.includes("/api/auth/login") && !url.includes("/api/auth/refresh");
 }
@@ -165,8 +185,11 @@ async function refreshAccessToken(): Promise<string | null> {
 async function extractErrorDetail(response: Response): Promise<string> {
   let detail = `${response.status} ${response.statusText}`;
   try {
-    const data = (await response.json()) as { detail?: string };
-    if (data?.detail) return data.detail;
+    const data = (await response.json()) as { detail?: string | { message?: string } };
+    if (typeof data?.detail === "string" && data.detail.trim()) return data.detail;
+    if (data?.detail && typeof data.detail === "object" && typeof data.detail.message === "string" && data.detail.message.trim()) {
+      return data.detail.message;
+    }
   } catch {
     // continue
   }

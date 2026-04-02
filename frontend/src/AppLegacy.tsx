@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
-type ViewKey = "focus" | "active" | "waiting" | "spam" | "reports" | "settings";
+type ViewKey = "focus" | "active" | "sent" | "waiting" | "spam" | "reports" | "settings";
 type UserRole = "admin" | "manager" | "operator" | "viewer";
 type EmailItem = {
   id: number;
@@ -37,6 +38,7 @@ type EmailItem = {
   assigned_to_user_id?: number | null;
   assigned_by_user_id?: number | null;
   assigned_at?: string | null;
+  sent_by_user_id?: number | null;
   sent_review_summary?: string | null;
   sent_review_status?: string | null;
   sent_review_issues_json?: string | null;
@@ -202,6 +204,7 @@ const initialMailboxForm: MailboxFormState = {
 };
 
 export function App() {
+  const { t, i18n } = useTranslation();
   const [authToken, setAuthToken] = useState<string>(() => getStoredAuthToken());
   const [currentUser, setCurrentUser] = useState<UserItem | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -213,6 +216,7 @@ export function App() {
   const [digest, setDigest] = useState<DigestResponse | null>(null);
   const [catchupDigest, setCatchupDigest] = useState<CatchupDigestResponse | null>(null);
   const [emails, setEmails] = useState<EmailItem[]>([]);
+  const [sentEmails, setSentEmails] = useState<EmailItem[]>([]);
   const [sentReviews, setSentReviews] = useState<EmailItem[]>([]);
   const [waitingItems, setWaitingItems] = useState<WaitingItem[]>([]);
   const [spamEmails, setSpamEmails] = useState<EmailItem[]>([]);
@@ -240,6 +244,7 @@ export function App() {
   const [replyLanguage, setReplyLanguage] = useState<"ru" | "en" | "tr">("ru");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [search, setSearch] = useState("");
+  const [sentSearch, setSentSearch] = useState("");
   const [queueFilter, setQueueFilter] = useState("needs-reply");
   const [reportType, setReportType] = useState("activity");
   const [reportDateFrom, setReportDateFrom] = useState("");
@@ -254,6 +259,8 @@ export function App() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [mobilePane, setMobilePane] = useState<"list" | "detail">("list");
 
   async function bootstrapAuth() {
     setAuthLoading(true);
@@ -338,9 +345,30 @@ export function App() {
       void handleLoadReport();
     }
   }, [view, reportType, reportDateFrom, reportDateTo, selectedMailboxId, currentUser]);
+  useEffect(() => {
+    setMobilePane("list");
+    setSidebarOpen(false);
+  }, [view]);
+
+  useEffect(() => {
+    if (view !== "sent") return;
+    if (sentEmails.length === 0) {
+      setSelectedEmailId(null);
+      return;
+    }
+    const selectedExists = sentEmails.some((item) => item.id === selectedEmailId);
+    if (!selectedExists) {
+      setSelectedEmailId(sentEmails[0].id);
+    }
+  }, [view, sentEmails, selectedEmailId]);
+
+  function handleSelectEmail(emailId: number) {
+    setSelectedEmailId(emailId);
+    setMobilePane("detail");
+  }
 
   const activeEmails = useMemo(() => {
-    let items = emails.filter((item) => item.direction !== "sent");
+    let items = emails;
     if (queueFilter === "needs-reply") items = items.filter((item) => item.requires_reply && item.status !== "replied" && !item.is_spam);
     else if (queueFilter === "waiting") items = items.filter((item) => item.waiting_state === "waiting_reply" || item.waiting_state === "overdue_reply");
     else if (queueFilter === "focus") items = items.filter((item) => item.focus_flag && !item.is_spam);
@@ -354,8 +382,29 @@ export function App() {
     return items;
   }, [emails, queueFilter, search]);
 
+  const sentQueueEmails = useMemo(() => {
+    let items = sentEmails;
+    if (sentSearch.trim()) {
+      const term = sentSearch.toLowerCase();
+      items = items.filter((item) =>
+        [
+          item.subject,
+          item.sender_email,
+          item.sender_name,
+          item.ai_summary,
+          item.body_text,
+          item.mailbox_name,
+          item.mailbox_address,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(term))
+      );
+    }
+    return items;
+  }, [sentEmails, sentSearch]);
+
   const focusSummary = useMemo(() => {
-    if (!stats || !digest) return "Load the queue to see the current operating picture for Orhun Medical.";
+    if (!stats || !digest) return "Load the queue to see the current operating picture for Orhun Mail Agent.";
     return `${stats.waiting_count} conversations are being tracked for reply. ${stats.overdue_count} are overdue, ${stats.spam_count} items are in spam review, and ${digest.important_emails} important emails landed today.`;
   }, [digest, stats]);
 
@@ -367,11 +416,12 @@ export function App() {
   async function loadInitialData() {
     setLoading(true); setErrorMessage("");
     try {
-      const [statsData, digestData, catchupData, emailData, sentReviewData, followupData, spamData, contactData, settingsData, preferenceData, rulesData, templatesData, mailboxData, usersData] = await Promise.all([
+      const [statsData, digestData, catchupData, emailData, sentEmailData, sentReviewData, followupData, spamData, contactData, settingsData, preferenceData, rulesData, templatesData, mailboxData, usersData] = await Promise.all([
         apiGet<StatsResponse>("/api/stats"),
         apiGet<DigestResponse>("/api/digest"),
         apiGet<CatchupDigestResponse>("/api/digest/catchup").catch(() => null),
-        apiGet<EmailItem[]>(`/api/emails?limit=60${mailboxQuery}`),
+        apiGet<EmailItem[]>(`/api/emails?limit=60&direction=inbound${mailboxQuery}`),
+        apiGet<EmailItem[]>(`/api/emails?limit=60&direction=sent${mailboxQuery}`).catch(() => []),
         apiGet<EmailItem[]>(`/api/sent/reviews?limit=30${mailboxQuery}`).catch(() => []),
         apiGet<WaitingItem[]>("/api/followups").catch(() => []),
         apiGet<EmailItem[]>(`/api/spam?limit=40${mailboxQuery}`).catch(() => []),
@@ -387,6 +437,7 @@ export function App() {
       setDigest(digestData);
       setCatchupDigest(catchupData);
       setEmails(emailData);
+      setSentEmails(sentEmailData);
       setSentReviews(sentReviewData);
       setWaitingItems(followupData);
       setSpamEmails(spamData);
@@ -464,13 +515,27 @@ export function App() {
 
   async function handleReplySend() {
     if (!selectedEmail || !draftText.trim()) { setErrorMessage("Draft reply is empty."); return; }
+    const recipient = (selectedEmail.sender_email || "").trim();
+    if (!recipient) {
+      setErrorMessage("Cannot send reply: recipient email is missing for this thread.");
+      return;
+    }
     setActionLoading("reply"); setErrorMessage(""); setSuccessMessage("");
     try {
-      await apiPost(`/api/emails/${selectedEmail.id}/reply`, { body: draftText, save_as_sent_record: true });
+      await apiPost(`/api/emails/${selectedEmail.id}/reply`, {
+        body: draftText,
+        to: [recipient],
+        save_as_sent_record: true,
+      });
       setSuccessMessage("Reply sent and waiting-for-reply tracking started.");
-      await refreshMailbox(selectedEmail.id);
+      try {
+        await refreshMailbox(selectedEmail.id);
+      } catch {
+        setSuccessMessage("Reply sent. Dashboard refresh failed, but your message was delivered and saved to Sent.");
+        await loadEmailDetail(selectedEmail.id);
+      }
     } catch (error) {
-      setErrorMessage(getErrorMessage(error, "Could not send the reply."));
+      setErrorMessage(`Send failed: ${getErrorMessage(error, "Could not send the reply.")}`);
     } finally { setActionLoading(null); }
   }
 
@@ -999,11 +1064,12 @@ export function App() {
 
   async function refreshMailbox(preserveEmailId?: number | null) {
     const mailboxQuery = selectedMailboxId !== "all" ? `&mailbox_id=${encodeURIComponent(selectedMailboxId)}` : "";
-    const [statsData, digestData, catchupData, emailData, sentReviewData, followupData, spamData, rulesData, templatesData, mailboxData, usersData] = await Promise.all([
+    const [statsData, digestData, catchupData, emailData, sentEmailData, sentReviewData, followupData, spamData, rulesData, templatesData, mailboxData, usersData] = await Promise.all([
       apiGet<StatsResponse>("/api/stats"),
       apiGet<DigestResponse>("/api/digest"),
       apiGet<CatchupDigestResponse>("/api/digest/catchup").catch(() => null),
-      apiGet<EmailItem[]>(`/api/emails?limit=60${mailboxQuery}`),
+      apiGet<EmailItem[]>(`/api/emails?limit=60&direction=inbound${mailboxQuery}`),
+      apiGet<EmailItem[]>(`/api/emails?limit=60&direction=sent${mailboxQuery}`).catch(() => []),
       apiGet<EmailItem[]>(`/api/sent/reviews?limit=30${mailboxQuery}`).catch(() => []),
       apiGet<WaitingItem[]>("/api/followups").catch(() => []),
       apiGet<EmailItem[]>(`/api/spam?limit=40${mailboxQuery}`).catch(() => []),
@@ -1016,6 +1082,7 @@ export function App() {
     setDigest(digestData);
     setCatchupDigest(catchupData);
     setEmails(emailData);
+    setSentEmails(sentEmailData);
     setSentReviews(sentReviewData);
     setWaitingItems(followupData);
     setSpamEmails(spamData);
@@ -1023,12 +1090,21 @@ export function App() {
     setTemplates(templatesData);
     setMailboxes(mailboxData);
     setUsers(usersData);
-    const stillExists = preserveEmailId ? emailData.find((item) => item.id === preserveEmailId) || spamData.find((item) => item.id === preserveEmailId) : null;
+    const stillExists = preserveEmailId
+      ? emailData.find((item) => item.id === preserveEmailId)
+        || sentEmailData.find((item) => item.id === preserveEmailId)
+        || spamData.find((item) => item.id === preserveEmailId)
+      : null;
     if (stillExists) {
       setSelectedEmailId(stillExists.id);
       void loadEmailDetail(stillExists.id);
     }
-    else setSelectedEmailId((emailData.find((item) => item.focus_flag && !item.is_spam) || emailData.find((item) => item.requires_reply && !item.is_spam) || emailData[0] || spamData[0] || null)?.id ?? null);
+    else {
+      const fallback = view === "sent"
+        ? sentEmailData[0] || emailData.find((item) => item.focus_flag && !item.is_spam) || emailData[0] || spamData[0] || null
+        : emailData.find((item) => item.focus_flag && !item.is_spam) || emailData.find((item) => item.requires_reply && !item.is_spam) || emailData[0] || spamData[0] || null;
+      setSelectedEmailId(fallback?.id ?? null);
+    }
   }
 
   function hydrateSettingsForm(data: SettingsResponse) {
@@ -1045,7 +1121,7 @@ export function App() {
       <div className="app-shell">
         <main className="content-shell">
           <div className="panel">
-            <div className="loading-state">Checking authentication...</div>
+            <div className="loading-state">{t("auth.checking")}</div>
           </div>
         </main>
       </div>
@@ -1059,8 +1135,8 @@ export function App() {
           <section className="panel" style={{ maxWidth: 480, margin: "48px auto" }}>
             <div className="panel-header">
               <div>
-                <h3 className="panel-title">Team login</h3>
-                <p className="panel-subtitle">Sign in to access Orhun Mail Agent workspace.</p>
+                <h3 className="panel-title">{t("auth.teamLogin")}</h3>
+                <p className="panel-subtitle">{t("auth.signinHint")}</p>
               </div>
             </div>
             <div className="panel-body">
@@ -1068,14 +1144,14 @@ export function App() {
               {successMessage ? <div className="success-banner" style={{ marginBottom: 12 }}>{successMessage}</div> : null}
               <form onSubmit={(event) => void handleLogin(event)}>
                 <div className="settings-grid">
-                  <Field label="Email" full>
+                  <Field label={t("auth.email")} full>
                     <input
                       value={loginForm.email}
                       onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
                       autoComplete="username"
                     />
                   </Field>
-                  <Field label="Password" full>
+                  <Field label={t("auth.password")} full>
                     <input
                       type="password"
                       value={loginForm.password}
@@ -1086,11 +1162,11 @@ export function App() {
                 </div>
                 <div className="detail-toolbar full" style={{ marginTop: 16 }}>
                   <button className="primary-button" type="submit" disabled={actionLoading === "auth-login"}>
-                    {actionLoading === "auth-login" ? "Signing in..." : "Sign in / Войти"}
+                    {actionLoading === "auth-login" ? t("auth.signingIn") : t("auth.signin")}
                   </button>
                 </div>
                 <p className="panel-subtitle" style={{ marginTop: 8, fontSize: 12 }}>
-                  Default credentials on first run: admin@orhun.local / admin123
+                  {t("auth.defaultCreds")}
                 </p>
               </form>
             </div>
@@ -1101,61 +1177,88 @@ export function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}>
+      <button
+        className="mobile-nav-toggle"
+        type="button"
+        onClick={() => setSidebarOpen((current) => !current)}
+        aria-label={t("app.mobileMenu")}
+      >
+        ☰
+      </button>
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
-          <h1>Orhun Mail Agent</h1>
-          <p>Action dashboard for intake, drafting, automation, and review control.</p>
+          <h1>{t("app.name")}</h1>
+          <p>{t("app.tagline")}</p>
         </div>
         <div className="nav-section">
-          <div className="nav-label">Workspace</div>
+          <div className="nav-label">{t("app.workspace")}</div>
           <div className="nav-list">
-            <NavButton label="Focus" active={view === "focus"} badge={stats?.waiting_reply_count} onClick={() => setView("focus")} />
-            <NavButton label="Active Queue" active={view === "active"} badge={activeEmails.length} onClick={() => setView("active")} />
-            <NavButton label="Waiting Queue" active={view === "waiting"} badge={stats?.overdue_count ?? waitingItems.length} onClick={() => setView("waiting")} />
-            <NavButton label="Spam Log" active={view === "spam"} badge={spamEmails.length} onClick={() => setView("spam")} />
-            <NavButton label="Reports" active={view === "reports"} onClick={() => setView("reports")} />
-            <NavButton label="Settings" active={view === "settings"} badge={rules.length} onClick={() => setView("settings")} />
+            <NavButton label={t("nav.focus")} active={view === "focus"} badge={stats?.waiting_reply_count} onClick={() => setView("focus")} />
+            <NavButton label={t("nav.active")} active={view === "active"} badge={activeEmails.length} onClick={() => setView("active")} />
+            <NavButton label={t("nav.sent")} active={view === "sent"} badge={sentEmails.length} onClick={() => setView("sent")} />
+            <NavButton label={t("nav.waiting")} active={view === "waiting"} badge={stats?.overdue_count ?? waitingItems.length} onClick={() => setView("waiting")} />
+            <NavButton label={t("nav.spam")} active={view === "spam"} badge={spamEmails.length} onClick={() => setView("spam")} />
+            <NavButton label={t("nav.reports")} active={view === "reports"} onClick={() => setView("reports")} />
+            <NavButton label={t("nav.settings")} active={view === "settings"} badge={rules.length} onClick={() => setView("settings")} />
           </div>
         </div>
         <div className="sidebar-actions">
           <div className="sidebar-card">
-            <h3 style={{ margin: 0 }}>Check now</h3>
-            <p>Run inbox scan and AI analysis on demand.</p>
+            <h3 style={{ margin: 0 }}>{t("sidebar.checkNow")}</h3>
+            <p>{t("sidebar.checkDesc")}</p>
             <div style={{ marginTop: 14 }}>
-              <button className="primary-button" onClick={() => void handleManualScan()} disabled={scanLoading || !canRunScan}>{scanLoading ? "Checking..." : "Scan now"}</button>
+              <button className="primary-button" onClick={() => void handleManualScan()} disabled={scanLoading || !canRunScan}>{scanLoading ? t("sidebar.checking") : t("sidebar.scanNow")}</button>
             </div>
-            {!canRunScan ? <div className="tiny" style={{ marginTop: 8 }}>Viewer role can monitor data but cannot trigger scans.</div> : null}
+            {!canRunScan ? <div className="tiny" style={{ marginTop: 8 }}>{t("sidebar.viewerReadonly")}</div> : null}
           </div>
           <div className="sidebar-card">
-            <h3 style={{ margin: 0 }}>Automation rules</h3>
-            <p>{rules.length} active rules are shaping focus, priority, archive, and spam review.</p>
+            <h3 style={{ margin: 0 }}>{t("sidebar.rules")}</h3>
+            <p>{t("sidebar.rulesDesc", { count: rules.length })}</p>
           </div>
         </div>
       </aside>
 
+      {sidebarOpen ? <button className="sidebar-overlay" onClick={() => setSidebarOpen(false)} aria-label={t("app.mobileMenu")} /> : null}
+
       <main className="content-shell">
         <header className="topbar">
           <div>
-            <h2>{getViewTitle(view)}</h2>
-            <p>{getViewSubtitle(view, focusSummary)}</p>
+            <h2>{t(`views.${view}.title`)}</h2>
+            <p>{view === "focus" ? t("views.focus.subtitle", { focusSummary }) : t(`views.${view}.subtitle`)}</p>
           </div>
           <div className="topbar-actions">
+            <div className="language-toggle">
+              <button
+                type="button"
+                className={`ghost-button ${i18n.language.startsWith("en") ? "active-language" : ""}`}
+                onClick={() => void i18n.changeLanguage("en")}
+              >
+                EN
+              </button>
+              <button
+                type="button"
+                className={`ghost-button ${i18n.language.startsWith("ru") ? "active-language" : ""}`}
+                onClick={() => void i18n.changeLanguage("ru")}
+              >
+                RU
+              </button>
+            </div>
             <select value={selectedMailboxId} onChange={(event) => setSelectedMailboxId(event.target.value)}>
-              <option value="all">All mailboxes</option>
+              <option value="all">{t("app.allMailboxes")}</option>
               {mailboxes.map((mailbox) => <option key={mailbox.id} value={mailbox.id}>{mailbox.name}</option>)}
             </select>
             <span className="badge">{currentUser.full_name} ({currentUser.role})</span>
-            {contacts?.items?.length ? <span className="badge">{contacts.items.length} key contacts loaded</span> : null}
-            {selectedEmail?.focus_flag ? <span className="badge">focus</span> : null}
+            {contacts?.items?.length ? <span className="badge">{t("app.contactsLoaded", { count: contacts.items.length })}</span> : null}
+            {selectedEmail?.focus_flag ? <span className="badge">{t("app.focus")}</span> : null}
             {selectedEmail?.priority ? <span className={`badge priority-${normalizePriority(selectedEmail.priority)}`}>{selectedEmail.priority}</span> : null}
             <button className="ghost-button" onClick={() => void handleLogout()} disabled={actionLoading === "auth-logout"}>
-              {actionLoading === "auth-logout" ? "Signing out..." : "Logout"}
+              {actionLoading === "auth-logout" ? t("app.signingOut") : t("app.logout")}
             </button>
           </div>
         </header>
 
-        {errorMessage ? <div className="error-banner">{errorMessage}</div> : null}
+        {errorMessage ? <div className="error-banner" role="alert">{errorMessage}</div> : null}
         {successMessage ? <div className="success-banner">{successMessage}</div> : null}
 
         {loading ? <div className="panel"><div className="loading-state">Loading dashboard...</div></div> : (
@@ -1186,28 +1289,33 @@ export function App() {
                     </div>
                   </div>
                   <div className="layout-grid">
-                    <CatchupPanel digest={catchupDigest} actionLoading={actionLoading} onMarkSeen={() => void handleMarkDigestSeen()} onOpenEmail={(id) => setSelectedEmailId(id)} />
-                    <SentReviewPanel items={sentReviews} actionLoading={actionLoading} canRunBatch={canRunSentReview} onOpenEmail={(id) => setSelectedEmailId(id)} onRunBatch={() => void handleRunSentReview()} onDismiss={(id) => void handleDismissSentReview(id)} onMarkHelpful={(id) => void handleHelpfulSentReview(id)} />
+                    <CatchupPanel digest={catchupDigest} actionLoading={actionLoading} onMarkSeen={() => void handleMarkDigestSeen()} onOpenEmail={handleSelectEmail} />
+                    <SentReviewPanel items={sentReviews} actionLoading={actionLoading} canRunBatch={canRunSentReview} onOpenEmail={handleSelectEmail} onRunBatch={() => void handleRunSentReview()} onDismiss={(id) => void handleDismissSentReview(id)} onMarkHelpful={(id) => void handleHelpfulSentReview(id)} />
                   </div>
                   <div className="layout-grid">
-                    <QueuePanel items={activeEmails} search={search} queueFilter={queueFilter} selectedEmailId={selectedEmailId} onQueueFilterChange={setQueueFilter} onSearchChange={setSearch} onSelectEmail={setSelectedEmailId} title="Needs reply now" subtitle="Action-oriented queue with AI hints, rule-based focus, urgency badges, and waiting signals." />
-                    <DetailPanel selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
+                    <QueuePanel className={mobilePane === "detail" ? "mobile-hidden" : "mobile-visible"} items={activeEmails} search={search} queueFilter={queueFilter} selectedEmailId={selectedEmailId} onQueueFilterChange={setQueueFilter} onSearchChange={setSearch} onSelectEmail={handleSelectEmail} title="Needs reply now" subtitle="Action-oriented queue with AI hints, rule-based focus, urgency badges, and waiting signals." />
+                    <DetailPanel className={mobilePane === "detail" ? "mobile-visible" : "mobile-hidden"} onBackToList={() => setMobilePane("list")} selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
                   </div>
                 </>
               ) : view === "active" ? (
                 <>
-                  <QueuePanel items={activeEmails} search={search} queueFilter={queueFilter} selectedEmailId={selectedEmailId} onQueueFilterChange={setQueueFilter} onSearchChange={setSearch} onSelectEmail={setSelectedEmailId} title="Active queue" subtitle="Browse live work, then move directly into draft, automation, and action mode." />
-                  <DetailPanel selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
+                  <QueuePanel className={mobilePane === "detail" ? "mobile-hidden" : "mobile-visible"} items={activeEmails} search={search} queueFilter={queueFilter} selectedEmailId={selectedEmailId} onQueueFilterChange={setQueueFilter} onSearchChange={setSearch} onSelectEmail={handleSelectEmail} title="Active queue" subtitle="Browse live work, then move directly into draft, automation, and action mode." />
+                  <DetailPanel className={mobilePane === "detail" ? "mobile-visible" : "mobile-hidden"} onBackToList={() => setMobilePane("list")} selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
+                </>
+              ) : view === "sent" ? (
+                <>
+                  <OutboxPanel className={mobilePane === "detail" ? "mobile-hidden" : "mobile-visible"} items={sentQueueEmails} search={sentSearch} selectedEmailId={selectedEmailId} onSearchChange={setSentSearch} onSelectEmail={handleSelectEmail} title={t("sent.title")} subtitle={t("sent.subtitle")} />
+                  <DetailPanel className={mobilePane === "detail" ? "mobile-visible" : "mobile-hidden"} onBackToList={() => setMobilePane("list")} selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
                 </>
               ) : view === "waiting" ? (
                 <>
-                  <WaitingPanel items={waitingItems} onSelectEmail={setSelectedEmailId} />
-                  <DetailPanel selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
+                  <WaitingPanel className={mobilePane === "detail" ? "mobile-hidden" : "mobile-visible"} items={waitingItems} onSelectEmail={handleSelectEmail} />
+                  <DetailPanel className={mobilePane === "detail" ? "mobile-visible" : "mobile-hidden"} onBackToList={() => setMobilePane("list")} selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} />
                 </>
               ) : (
                 <>
-                  <SpamPanel items={spamEmails} onSelectEmail={setSelectedEmailId} />
-                  <DetailPanel selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} allowSpamReview />
+                  <SpamPanel className={mobilePane === "detail" ? "mobile-hidden" : "mobile-visible"} items={spamEmails} onSelectEmail={handleSelectEmail} />
+                  <DetailPanel className={mobilePane === "detail" ? "mobile-visible" : "mobile-hidden"} onBackToList={() => setMobilePane("list")} selectedEmail={selectedEmail} thread={thread} attachments={attachments} users={users} currentUser={currentUser} draftText={draftText} replyLanguage={replyLanguage} selectedTemplateId={selectedTemplateId} templates={templates} onReplyLanguageChange={(language) => void handleReplyLanguageChange(language)} onTemplateChange={setSelectedTemplateId} onDraftChange={setDraftText} onSendReply={() => void handleReplySend()} onGenerateDraft={() => void handleGenerateDraft()} onRewriteDraft={(instruction, targetLanguage) => void handleRewriteDraft(instruction, targetLanguage)} onStatusUpdate={(status) => void handleStatusUpdate(status)} onStartWaiting={() => void handleWaitingStart()} onCloseWaiting={() => void handleWaitingClose()} onGenerateFollowup={() => void handleGenerateFollowup()} onFeedback={(decisionType, verdict, details) => void handleFeedback(decisionType, verdict, details)} onDraftFeedback={(verdict) => void handleDraftFeedback(verdict)} onRestoreSpam={() => void handleSpamRestore()} onConfirmSpam={() => void handleConfirmSpam()} onCreateQuickRule={(template) => void handleQuickRuleCreate(template)} onAssignEmail={(userId) => void handleAssignEmail(userId)} onUnassignEmail={() => void handleUnassignEmail()} loading={detailLoading} actionLoading={actionLoading} allowSpamReview />
                 </>
               )}
             </div>
@@ -1218,27 +1326,265 @@ export function App() {
   );
 }
 
-export function QueuePanel(props: { title: string; subtitle: string; items: EmailItem[]; search: string; queueFilter: string; selectedEmailId: number | null; onQueueFilterChange: (value: string) => void; onSearchChange: (value: string) => void; onSelectEmail: (id: number) => void }) {
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">{props.title}</h3><p className="panel-subtitle">{props.subtitle}</p></div></div><div className="panel-body"><div className="queue-toolbar"><input value={props.search} onChange={(event) => props.onSearchChange(event.target.value)} placeholder="Search sender, subject, summary, attachment name" /><select value={props.queueFilter} onChange={(event) => props.onQueueFilterChange(event.target.value)}><option value="needs-reply">Needs reply</option><option value="focus">Focus senders</option><option value="waiting">Waiting</option><option value="all">All active</option></select></div><div className="queue-list">{props.items.length === 0 ? <div className="empty-state"><strong>Queue is clear</strong><p>No active items match the current filter.</p></div> : props.items.map((item) => <button key={item.id} className={`queue-item ${item.id === props.selectedEmailId ? "active" : ""}`} onClick={() => props.onSelectEmail(item.id)}><div className="queue-meta"><span className={`badge priority-${normalizePriority(item.priority)}`}>{item.priority || "medium"}</span><span className={`badge status-${item.status}`}>{item.status}</span>{item.category ? <span className="badge">{item.category}</span> : null}{item.mailbox_name || item.mailbox_address ? <span className="badge">{item.mailbox_name || item.mailbox_address}</span> : null}{item.assigned_to_user_id ? <span className="badge">owner #{item.assigned_to_user_id}</span> : null}{item.has_attachments ? <span className="badge">attachments {item.attachment_count || 0}</span> : null}{item.focus_flag ? <span className="badge">focus</span> : null}{item.waiting_state ? <span className={`badge ${item.waiting_state}`}>{item.waiting_state}</span> : null}</div><div className="queue-main"><div><h4>{item.sender_name || item.sender_email || "Unknown sender"}</h4><p>{item.subject || "No subject"}</p><p>{item.ai_summary || item.body_text?.slice(0, 120) || "No preview available."}</p></div><div className="queue-time">{item.wait_days != null ? `${item.wait_days}d wait` : formatDate(item.date_received)}</div></div></button>)}</div></div></section>;
+export function QueuePanel(props: { className?: string; title: string; subtitle: string; items: EmailItem[]; search: string; queueFilter: string; selectedEmailId: number | null; onQueueFilterChange: (value: string) => void; onSearchChange: (value: string) => void; onSelectEmail: (id: number) => void }) {
+  const { t } = useTranslation();
+  return (
+    <section className={`panel ${props.className || ""}`.trim()}>
+      <div className="panel-header">
+        <div>
+          <h3 className="panel-title">{props.title}</h3>
+          <p className="panel-subtitle">{props.subtitle}</p>
+        </div>
+      </div>
+      <div className="panel-body">
+        <div className="queue-toolbar">
+          <input value={props.search} onChange={(event) => props.onSearchChange(event.target.value)} placeholder={t("queue.searchPlaceholder")} />
+          <select value={props.queueFilter} onChange={(event) => props.onQueueFilterChange(event.target.value)}>
+            <option value="needs-reply">{t("queue.needsReply")}</option>
+            <option value="focus">{t("queue.focusSenders")}</option>
+            <option value="waiting">{t("queue.waiting")}</option>
+            <option value="all">{t("queue.allActive")}</option>
+          </select>
+        </div>
+        <div className="queue-list">
+          {props.items.length === 0 ? (
+            <div className="empty-state">
+              <strong>{t("queue.clear")}</strong>
+              <p>{t("queue.clearDesc")}</p>
+            </div>
+          ) : props.items.map((item) => (
+            <button key={item.id} className={`queue-item ${item.id === props.selectedEmailId ? "active" : ""}`} onClick={() => props.onSelectEmail(item.id)}>
+              <div className="queue-meta">
+                <span className={`badge priority-${normalizePriority(item.priority)}`}>{item.priority || "medium"}</span>
+                <span className={`badge status-${item.status}`}>{item.status}</span>
+                {item.category ? <span className="badge">{item.category}</span> : null}
+                {item.mailbox_name || item.mailbox_address ? <span className="badge">{item.mailbox_name || item.mailbox_address}</span> : null}
+                {item.assigned_to_user_id ? <span className="badge">{t("queue.owner", { id: item.assigned_to_user_id })}</span> : null}
+                {item.has_attachments ? <span className="badge">{t("queue.attachments", { count: item.attachment_count || 0 })}</span> : null}
+                {item.focus_flag ? <span className="badge">{t("app.focus")}</span> : null}
+                {item.waiting_state ? <span className={`badge ${item.waiting_state}`}>{item.waiting_state}</span> : null}
+              </div>
+              <div className="queue-main">
+                <div>
+                  <h4>{item.sender_name || item.sender_email || t("queue.unknownSender")}</h4>
+                  <p>{item.subject || t("queue.noSubject")}</p>
+                  <p>{item.ai_summary || item.body_text?.slice(0, 120) || t("queue.noPreview")}</p>
+                </div>
+                <div className="queue-time">{item.wait_days != null ? t("queue.waitDays", { count: item.wait_days }) : formatDate(item.date_received)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }
 
-export function WaitingPanel(props: { items: WaitingItem[]; onSelectEmail: (id: number) => void }) {
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Waiting queue</h3><p className="panel-subtitle">Tracked conversations waiting for the other side. Overdue items should be followed up first.</p></div></div><div className="panel-body"><div className="log-list">{props.items.length === 0 ? <div className="empty-state"><strong>No waiting threads</strong><p>Threads marked as waiting for reply will appear here.</p></div> : props.items.map((item) => <div key={item.task_id} className="log-item"><div className="queue-main"><div><h4>{item.latest_sender_name || item.latest_sender_email || "Unknown sender"}</h4><p>{item.latest_subject || item.title}</p><p>{item.latest_ai_summary || item.subtitle || "No AI summary available."}</p></div><div className="queue-time">{item.wait_days}d wait</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${item.state}`}>{item.state}</span>{item.expected_reply_by ? <span className="badge">Due {formatDate(item.expected_reply_by)}</span> : null}{item.latest_email_id ? <button className="secondary-button" onClick={() => props.onSelectEmail(item.latest_email_id!)}>Open thread</button> : null}</div></div>)}</div></div></section>;
+export function OutboxPanel(props: { className?: string; title: string; subtitle: string; items: EmailItem[]; search: string; selectedEmailId: number | null; onSearchChange: (value: string) => void; onSelectEmail: (id: number) => void }) {
+  const { t } = useTranslation();
+  return (
+    <section className={`panel ${props.className || ""}`.trim()}>
+      <div className="panel-header">
+        <div>
+          <h3 className="panel-title">{props.title}</h3>
+          <p className="panel-subtitle">{props.subtitle}</p>
+        </div>
+      </div>
+      <div className="panel-body">
+        <div className="queue-toolbar outbox-toolbar">
+          <input value={props.search} onChange={(event) => props.onSearchChange(event.target.value)} placeholder={t("sent.searchPlaceholder")} />
+        </div>
+        <div className="queue-list">
+          {props.items.length === 0 ? (
+            <div className="empty-state">
+              <strong>{t("sent.emptyTitle")}</strong>
+              <p>{t("sent.emptySubtitle")}</p>
+            </div>
+          ) : props.items.map((item) => (
+            <button key={item.id} className={`queue-item ${item.id === props.selectedEmailId ? "active" : ""}`} onClick={() => props.onSelectEmail(item.id)}>
+              <div className="queue-meta">
+                <span className="badge">{t("sent.direction")}</span>
+                <span className={`badge status-${item.status}`}>{item.status}</span>
+                {item.mailbox_name || item.mailbox_address ? <span className="badge">{item.mailbox_name || item.mailbox_address}</span> : null}
+                {item.has_attachments ? <span className="badge">{t("queue.attachments", { count: item.attachment_count || 0 })}</span> : null}
+              </div>
+              <div className="queue-main">
+                <div>
+                  <h4>{item.sender_name || item.sender_email || t("queue.unknownSender")}</h4>
+                  <p>{item.subject || t("queue.noSubject")}</p>
+                  <p>{item.ai_summary || item.body_text?.slice(0, 120) || t("queue.noPreview")}</p>
+                </div>
+                <div className="queue-time">{formatDate(item.date_received)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
 }
 
-export function DetailPanel(props: { selectedEmail: EmailItem | null; thread: EmailItem[]; attachments: AttachmentItem[]; users: UserItem[]; currentUser: UserItem | null; draftText: string; replyLanguage: "ru" | "en" | "tr"; selectedTemplateId: string; templates: MessageTemplate[]; onReplyLanguageChange: (language: "ru" | "en" | "tr") => void; onTemplateChange: (templateId: string) => void; onDraftChange: (value: string) => void; onSendReply: () => void; onGenerateDraft: () => void; onRewriteDraft: (instruction: string, targetLanguage?: "ru" | "en" | "tr") => void; onStatusUpdate: (status: string) => void; onStartWaiting: () => void; onCloseWaiting: () => void; onGenerateFollowup: () => void; onFeedback: (decisionType: string, verdict: string, details?: Record<string, unknown>) => void; onDraftFeedback: (verdict: "useful" | "bad") => void; onRestoreSpam: () => void; onConfirmSpam: () => void; onCreateQuickRule: (template: QuickRuleTemplate) => void; onAssignEmail: (userId: number) => void; onUnassignEmail: () => void; loading: boolean; actionLoading: string | null; allowSpamReview?: boolean }) {
-  const appliedRules = parseAppliedRules(props.selectedEmail?.applied_rules_json);
+export function WaitingPanel(props: { className?: string; items: WaitingItem[]; onSelectEmail: (id: number) => void }) {
+  const { t } = useTranslation();
+  return (
+    <section className={`panel ${props.className || ""}`.trim()}>
+      <div className="panel-header">
+        <div>
+          <h3 className="panel-title">{t("waitingPanel.title")}</h3>
+          <p className="panel-subtitle">{t("waitingPanel.subtitle")}</p>
+        </div>
+      </div>
+      <div className="panel-body">
+        <div className="log-list">
+          {props.items.length === 0 ? (
+            <div className="empty-state">
+              <strong>{t("waitingPanel.none")}</strong>
+              <p>{t("waitingPanel.noneDesc")}</p>
+            </div>
+          ) : props.items.map((item) => (
+            <div key={item.task_id} className="log-item">
+              <div className="queue-main">
+                <div>
+                  <h4>{item.latest_sender_name || item.latest_sender_email || t("queue.unknownSender")}</h4>
+                  <p>{item.latest_subject || item.title}</p>
+                  <p>{item.latest_ai_summary || item.subtitle || t("queue.noPreview")}</p>
+                </div>
+                <div className="queue-time">{t("queue.waitDays", { count: item.wait_days })}</div>
+              </div>
+              <div className="queue-meta" style={{ marginTop: 10 }}>
+                <span className={`badge ${item.state}`}>{item.state}</span>
+                {item.expected_reply_by ? <span className="badge">{t("waitingPanel.due", { date: formatDate(item.expected_reply_by) })}</span> : null}
+                {item.latest_email_id ? <button className="secondary-button" onClick={() => props.onSelectEmail(item.latest_email_id!)}>{t("waitingPanel.openThread")}</button> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function DetailPanel(props: { className?: string; onBackToList?: () => void; selectedEmail: EmailItem | null; thread: EmailItem[]; attachments: AttachmentItem[]; users: UserItem[]; currentUser: UserItem | null; draftText: string; replyLanguage: "ru" | "en" | "tr"; selectedTemplateId: string; templates: MessageTemplate[]; onReplyLanguageChange: (language: "ru" | "en" | "tr") => void; onTemplateChange: (templateId: string) => void; onDraftChange: (value: string) => void; onSendReply: () => void; onGenerateDraft: () => void; onRewriteDraft: (instruction: string, targetLanguage?: "ru" | "en" | "tr") => void; onStatusUpdate: (status: string) => void; onStartWaiting: () => void; onCloseWaiting: () => void; onGenerateFollowup: () => void; onFeedback: (decisionType: string, verdict: string, details?: Record<string, unknown>) => void; onDraftFeedback: (verdict: "useful" | "bad") => void; onRestoreSpam: () => void; onConfirmSpam: () => void; onCreateQuickRule: (template: QuickRuleTemplate) => void; onAssignEmail: (userId: number) => void; onUnassignEmail: () => void; loading: boolean; actionLoading: string | null; allowSpamReview?: boolean }) {
+  const { t } = useTranslation();
   const availableTemplates = props.templates.filter((item) => item.enabled && item.language === props.replyLanguage);
   const role = props.currentUser?.role || "viewer";
   const canSend = ["admin", "manager", "operator"].includes(role);
   const canAssign = ["admin", "manager"].includes(role);
   const canManageRules = ["admin", "manager"].includes(role);
   const canSpamReview = ["admin", "manager", "operator"].includes(role);
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Thread detail</h3><p className="panel-subtitle">Review message context, AI summary, draft, language, templates, rules, and follow-up state before acting.</p></div></div><div className="panel-body">{props.loading ? <div className="loading-state">Loading detail...</div> : !props.selectedEmail ? <div className="empty-state"><strong>Select an item</strong><p>Pick a thread from the queue to review the draft workflow.</p></div> : <div className="detail-panel"><div className="detail-head"><div className="detail-title"><h3>{props.selectedEmail.subject || "No subject"}</h3><div className="detail-meta"><span className={`badge priority-${normalizePriority(props.selectedEmail.priority)}`}>{props.selectedEmail.priority || "medium"}</span><span className={`badge status-${props.selectedEmail.status}`}>{props.selectedEmail.status}</span>{props.selectedEmail.category ? <span className="badge">{props.selectedEmail.category}</span> : null}<span className="badge">{props.selectedEmail.sender_name || props.selectedEmail.sender_email || "Unknown sender"}</span>{props.selectedEmail.mailbox_name || props.selectedEmail.mailbox_address ? <span className="badge">{props.selectedEmail.mailbox_name || props.selectedEmail.mailbox_address}</span> : null}{props.selectedEmail.has_attachments ? <span className="badge">attachments {props.selectedEmail.attachment_count || props.attachments.length}</span> : null}{props.selectedEmail.focus_flag ? <span className="badge">focus</span> : null}{props.selectedEmail.detected_source_language ? <span className="badge">in {props.selectedEmail.detected_source_language.toUpperCase()}</span> : null}{props.selectedEmail.waiting_state ? <span className={`badge ${props.selectedEmail.waiting_state}`}>{props.selectedEmail.waiting_state}</span> : null}</div></div><div className="tiny">{props.selectedEmail.wait_days != null ? `Waiting ${props.selectedEmail.wait_days} days` : formatDate(props.selectedEmail.date_received)}</div></div><div className="detail-section"><h4>Assignment</h4><div className="queue-meta">{props.selectedEmail.assigned_to_user_id ? <span className="badge">Assigned to #{props.selectedEmail.assigned_to_user_id}</span> : <span className="badge">Unassigned</span>}{props.selectedEmail.assigned_at ? <span className="badge">{formatDate(props.selectedEmail.assigned_at)}</span> : null}</div>{canAssign ? <div className="detail-toolbar" style={{ marginTop: 10 }}><select defaultValue="" onChange={(event) => { const value = Number(event.target.value); if (value) props.onAssignEmail(value); }}><option value="">Assign to user</option>{props.users.filter((user) => user.is_active).map((user) => <option key={user.id} value={user.id}>{user.full_name} ({user.role})</option>)}</select><button className="ghost-button" onClick={props.onUnassignEmail} disabled={Boolean(props.actionLoading)}>Unassign</button></div> : null}</div><div className="assistant-grid"><div className="detail-section"><h4>AI summary</h4><div className="detail-copy"><p>{props.selectedEmail.ai_summary || "Analysis is not available for this item yet."}</p></div><div className="detail-toolbar full"><button className="secondary-button" onClick={() => props.onFeedback("summary", "useful")} disabled={!canSend}>Summary helpful</button><button className="ghost-button" onClick={() => props.onFeedback("summary", "bad")} disabled={!canSend}>Summary off</button></div></div><div className="detail-section"><h4>Suggested next step</h4><div className="detail-copy"><p>{props.selectedEmail.action_description || (props.selectedEmail.requires_reply ? "Reply expected. Review and send draft." : props.selectedEmail.waiting_state ? "Conversation is being tracked while waiting for the other side." : "No immediate action suggested.")}</p>{props.selectedEmail.spam_source || props.selectedEmail.spam_reason ? <p><strong>Spam source:</strong> {props.selectedEmail.spam_source || "unknown"} {props.selectedEmail.spam_reason ? `- ${props.selectedEmail.spam_reason}` : ""}</p> : null}</div><div className="detail-toolbar full"><button className="secondary-button" onClick={() => props.onFeedback("priority", "mark_important", { new_priority: "high" })} disabled={!canSend}>Mark important</button><button className="ghost-button" onClick={() => props.onFeedback("priority", "mark_not_important", { new_priority: "low" })} disabled={!canSend}>Not important</button></div></div></div><div className="detail-section"><h4>Thread</h4><div className="detail-thread">{(props.thread.length ? props.thread : [props.selectedEmail]).map((item) => <div key={item.id} className="thread-item"><div className="thread-meta"><span className="badge">{item.sender_name || item.sender_email || "Unknown sender"}</span><span className="badge">{formatDate(item.date_received)}</span>{item.mailbox_name || item.mailbox_address ? <span className="badge">{item.mailbox_name || item.mailbox_address}</span> : null}</div><h4>{item.subject || "No subject"}</h4><p>{item.body_text || item.ai_summary || "No body text available."}</p></div>)}</div></div><div className="detail-section"><h4>Attachments</h4>{props.attachments.length === 0 ? <div className="tiny">No attachments for this email.</div> : <div className="log-list">{props.attachments.map((attachment) => <div key={attachment.id} className="log-item"><div className="queue-main"><div><h4>{attachment.filename || `attachment-${attachment.id}`}</h4><p>{attachment.content_type || "application/octet-stream"}</p></div><div className="queue-time">{Math.max(1, Math.round(attachment.size_bytes / 1024))} KB</div></div><div className="queue-meta" style={{ marginTop: 10 }}><a className="secondary-button" href={`/api/emails/attachments/${attachment.id}/download`} target="_blank" rel="noreferrer">Download</a>{attachment.is_inline ? <span className="badge">inline</span> : null}</div></div>)}</div>}</div><div className="detail-section"><h4>Automation trace</h4>{appliedRules.length === 0 ? <div className="tiny">No explicit user rule matched this email yet.</div> : <div className="queue-meta">{appliedRules.map((rule) => <span key={rule.id} className="badge">{rule.name}</span>)}</div>}{canManageRules ? <div className="detail-toolbar" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-high")} disabled={Boolean(props.actionLoading)}>Always high</button><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-focus")} disabled={Boolean(props.actionLoading)}>Always focus</button><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-archive")} disabled={Boolean(props.actionLoading)}>Always archive</button><button className="danger-button" onClick={() => props.onCreateQuickRule("always-spam")} disabled={Boolean(props.actionLoading)}>Always spam</button><button className="ghost-button" onClick={() => props.onCreateQuickRule("never-spam")} disabled={Boolean(props.actionLoading)}>Never spam</button></div> : <div className="tiny">Rule management is available for admin and manager roles.</div>}</div><div className="detail-section"><div className="split-note"><div><h4>{props.selectedEmail.waiting_state ? "Follow-up / reply draft" : "Draft reply"}</h4><div className="tiny">Detected: {(props.selectedEmail.detected_source_language || "ru").toUpperCase()} | Reply: {props.replyLanguage.toUpperCase()}</div></div><span className="badge">{props.draftText.length} chars</span></div><div className="queue-toolbar" style={{ marginBottom: 12 }}><select value={props.replyLanguage} onChange={(event) => props.onReplyLanguageChange(event.target.value as "ru" | "en" | "tr")} disabled={!canSend}><option value="ru">Russian</option><option value="en">English</option><option value="tr">Turkish</option></select><select value={props.selectedTemplateId} onChange={(event) => props.onTemplateChange(event.target.value)} disabled={!canSend}><option value="">No template</option>{availableTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></div><div className="detail-toolbar" style={{ marginBottom: 12 }}><button className="secondary-button" onClick={props.onGenerateDraft} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "generate-draft" ? "Generating..." : "Generate draft"}</button><button className="secondary-button" onClick={() => props.onRewriteDraft("shorter")} disabled={Boolean(props.actionLoading) || !canSend}>Shorter</button><button className="secondary-button" onClick={() => props.onRewriteDraft("more formal")} disabled={Boolean(props.actionLoading) || !canSend}>More formal</button><button className="secondary-button" onClick={() => props.onRewriteDraft("softer")} disabled={Boolean(props.actionLoading) || !canSend}>Softer</button><button className="secondary-button" onClick={() => props.onRewriteDraft("stronger deadline emphasis")} disabled={Boolean(props.actionLoading) || !canSend}>Deadline emphasis</button></div><div className="detail-toolbar" style={{ marginBottom: 12 }}><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Russian", "ru")} disabled={Boolean(props.actionLoading) || !canSend}>Translate to RU</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to English", "en")} disabled={Boolean(props.actionLoading) || !canSend}>Translate to EN</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Turkish", "tr")} disabled={Boolean(props.actionLoading) || !canSend}>Translate to TR</button></div><textarea rows={10} value={props.draftText} onChange={(event) => props.onDraftChange(event.target.value)} placeholder="Draft reply..." readOnly={!canSend} /><div className="detail-toolbar full"><button className="secondary-button" onClick={() => props.onDraftFeedback("useful")} disabled={!canSend}>Draft helpful</button><button className="ghost-button" onClick={() => props.onDraftFeedback("bad")} disabled={!canSend}>Draft needs work</button></div></div><div className="detail-toolbar"><button className="primary-button" onClick={props.onSendReply} disabled={props.actionLoading === "reply" || !canSend}>{props.actionLoading === "reply" ? "Sending..." : "Send draft"}</button><button className="secondary-button" onClick={props.onGenerateFollowup} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "followup-draft" ? "Generating..." : "Generate follow-up"}</button><button className="secondary-button" onClick={props.selectedEmail.waiting_state ? props.onCloseWaiting : props.onStartWaiting} disabled={Boolean(props.actionLoading) || !canSend}>{props.selectedEmail.waiting_state ? "Close waiting" : "Waiting for reply"}</button><button className="secondary-button" onClick={() => props.onStatusUpdate("replied")} disabled={Boolean(props.actionLoading) || !canSend}>I will reply myself</button><button className="secondary-button" onClick={() => props.onStatusUpdate("archived")} disabled={Boolean(props.actionLoading) || !canSend}>Archive</button>{props.allowSpamReview ? <button className="secondary-button" onClick={props.onRestoreSpam} disabled={Boolean(props.actionLoading) || !canSpamReview}>{props.actionLoading === "spam-restore" ? "Restoring..." : "Restore to active"}</button> : <button className="danger-button" onClick={() => props.onStatusUpdate("spam")} disabled={Boolean(props.actionLoading) || !canSpamReview}>Mark spam</button>}{props.allowSpamReview ? <button className="danger-button" onClick={props.onConfirmSpam} disabled={Boolean(props.actionLoading) || !canSpamReview}>{props.actionLoading === "spam-confirm" ? "Confirming..." : "Confirm spam"}</button> : <button className="ghost-button" onClick={() => props.onStatusUpdate("read")} disabled={Boolean(props.actionLoading) || !canSend}>Later / snooze</button>}</div>{!canSend ? <div className="tiny" style={{ marginTop: 10 }}>Viewer role is read-only. Ask a manager/admin to assign or action this thread.</div> : null}</div>}</div></section>;
+
+  return (
+    <section className={`panel ${props.className || ""}`.trim()}>
+      <div className="panel-header">
+        <div>
+          <h3 className="panel-title">{t("detail.title")}</h3>
+          <p className="panel-subtitle">{t("detail.subtitle")}</p>
+        </div>
+        <button type="button" className="ghost-button mobile-only-inline" onClick={props.onBackToList}>{t("detail.backToList")}</button>
+      </div>
+      <div className="panel-body">
+        {props.loading ? <div className="loading-state">{t("detail.loading")}</div> : null}
+        {!props.loading && !props.selectedEmail ? <div className="empty-state"><strong>{t("detail.selectItem")}</strong><p>{t("detail.selectItemDesc")}</p></div> : null}
+        {!props.loading && props.selectedEmail ? (
+          <div className="detail-panel">
+            <div className="detail-head">
+              <div className="detail-title">
+                <h3>{props.selectedEmail.subject || t("queue.noSubject")}</h3>
+                <div className="detail-meta">
+                  <span className={`badge priority-${normalizePriority(props.selectedEmail.priority)}`}>{props.selectedEmail.priority || "medium"}</span>
+                  <span className={`badge status-${props.selectedEmail.status}`}>{props.selectedEmail.status}</span>
+                  <span className="badge">{props.selectedEmail.sender_name || props.selectedEmail.sender_email || t("queue.unknownSender")}</span>
+                </div>
+              </div>
+              <div className="tiny">{props.selectedEmail.wait_days != null ? t("queue.waitDays", { count: props.selectedEmail.wait_days }) : formatDate(props.selectedEmail.date_received)}</div>
+            </div>
+
+            <div className="detail-section">
+              <h4>{t("detail.assignment")}</h4>
+              <div className="queue-meta">
+                {props.selectedEmail.assigned_to_user_id ? <span className="badge">{t("detail.assigned", { id: props.selectedEmail.assigned_to_user_id })}</span> : <span className="badge">{t("detail.unassigned")}</span>}
+              </div>
+              {canAssign ? <div className="detail-toolbar compact"><select defaultValue="" onChange={(event) => { const value = Number(event.target.value); if (value) props.onAssignEmail(value); }}><option value="">{t("detail.assignTo")}</option>{props.users.filter((user) => user.is_active).map((user) => <option key={user.id} value={user.id}>{user.full_name} ({user.role})</option>)}</select><button className="ghost-button" onClick={props.onUnassignEmail} disabled={Boolean(props.actionLoading)}>{t("detail.unassign")}</button></div> : null}
+            </div>
+
+            <div className="detail-section">
+              <h4>{t("detail.aiSummary")}</h4>
+              <div className="summary-banner">
+                <h5>{t("detail.summaryHeading")}</h5>
+                <p>{props.selectedEmail.ai_summary || t("detail.noAnalysis")}</p>
+              </div>
+              <div className="detail-toolbar compact"><button className="secondary-button" onClick={() => props.onFeedback("summary", "useful")} disabled={!canSend}>{t("detail.summaryHelpful")}</button><button className="ghost-button" onClick={() => props.onFeedback("summary", "bad")} disabled={!canSend}>{t("detail.summaryOff")}</button></div>
+            </div>
+
+            <div className="detail-section">
+              <h4>{t("detail.thread")}</h4>
+              <div className="detail-thread">
+                {(props.thread.length ? props.thread : [props.selectedEmail]).map((item, index) => {
+                  const isCurrent = item.id === props.selectedEmail!.id;
+                  const isDefaultOpen = isCurrent || index === (props.thread.length ? props.thread.length - 1 : 0);
+                  const isOutgoing = Boolean(
+                    item.direction === "sent"
+                      || item.direction === "outbound"
+                      || (props.currentUser?.id != null && item.sent_by_user_id === props.currentUser.id)
+                      || (props.currentUser?.email && item.sender_email && item.sender_email.toLowerCase() === props.currentUser.email.toLowerCase())
+                  );
+                  return (
+                    <details
+                      key={item.id}
+                      className={`thread-item thread-entry ${isCurrent ? "is-current" : ""} ${isOutgoing ? "thread-entry-outbound" : "thread-entry-inbound"}`}
+                      open={isDefaultOpen}
+                    >
+                      <summary className="thread-entry-summary">
+                        <div className="thread-entry-summary-content">
+                          <div className="thread-meta">
+                            <span className="badge">{item.sender_name || item.sender_email || t("queue.unknownSender")}</span>
+                            <span className="badge">{formatDate(item.date_received)}</span>
+                            <span className="badge">{isOutgoing ? "you" : "inbound"}</span>
+                          </div>
+                          <h4>{item.subject || t("queue.noSubject")}</h4>
+                        </div>
+                      </summary>
+                      <div className="thread-entry-content">
+                        <div className="summary-banner">
+                          <h5>{t("detail.summaryHeading")}</h5>
+                          <p>{item.ai_summary || t("detail.noAnalysis")}</p>
+                        </div>
+                        <div className="message-body">
+                          <h5>{t("detail.originalMessage")}</h5>
+                          <p>{item.body_text || t("queue.noPreview")}</p>
+                        </div>
+                      </div>
+                    </details>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="detail-section">
+              <h4>{t("detail.draftTitle")}</h4>
+              <div className="queue-toolbar"><select value={props.replyLanguage} onChange={(event) => props.onReplyLanguageChange(event.target.value as "ru" | "en" | "tr")} disabled={!canSend}><option value="ru">Russian</option><option value="en">English</option><option value="tr">Turkish</option></select><select value={props.selectedTemplateId} onChange={(event) => props.onTemplateChange(event.target.value)} disabled={!canSend}><option value="">{t("detail.noTemplate")}</option>{availableTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></div>
+
+              <div className="action-menu-row">
+                <details className="action-menu"><summary>{t("detail.rewriteMenu")}</summary><div className="action-menu-body"><button className="secondary-button" onClick={props.onGenerateDraft} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "generate-draft" ? t("detail.generating") : t("detail.generateDraft")}</button><button className="ghost-button" onClick={() => props.onRewriteDraft("shorter")} disabled={Boolean(props.actionLoading) || !canSend}>Shorter</button><button className="ghost-button" onClick={() => props.onRewriteDraft("more formal")} disabled={Boolean(props.actionLoading) || !canSend}>More formal</button><button className="ghost-button" onClick={() => props.onRewriteDraft("softer")} disabled={Boolean(props.actionLoading) || !canSend}>Softer</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Russian", "ru")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateRu")}</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to English", "en")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateEn")}</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Turkish", "tr")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateTr")}</button></div></details>
+                {canManageRules ? <details className="action-menu"><summary>{t("detail.rulesMenu")}</summary><div className="action-menu-body"><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-high")} disabled={Boolean(props.actionLoading)}>Always high</button><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-focus")} disabled={Boolean(props.actionLoading)}>Always focus</button><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-archive")} disabled={Boolean(props.actionLoading)}>Always archive</button><button className="danger-button" onClick={() => props.onCreateQuickRule("always-spam")} disabled={Boolean(props.actionLoading)}>Always spam</button></div></details> : null}
+                <details className="action-menu"><summary>{t("detail.actionMenu")}</summary><div className="action-menu-body"><button className="secondary-button" onClick={() => props.onStatusUpdate("archived")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.archive")}</button><button className="secondary-button" onClick={() => props.onStatusUpdate("replied")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.replyMyself")}</button><button className="secondary-button" onClick={props.selectedEmail.waiting_state ? props.onCloseWaiting : props.onStartWaiting} disabled={Boolean(props.actionLoading) || !canSend}>{props.selectedEmail.waiting_state ? t("detail.closeWaiting") : t("detail.waitingForReply")}</button>{props.allowSpamReview ? <button className="danger-button" onClick={props.onConfirmSpam} disabled={Boolean(props.actionLoading) || !canSpamReview}>{t("detail.confirmSpam")}</button> : <button className="danger-button" onClick={() => props.onStatusUpdate("spam")} disabled={Boolean(props.actionLoading) || !canSpamReview}>{t("detail.markSpam")}</button>}</div></details>
+              </div>
+
+              <textarea rows={10} value={props.draftText} onChange={(event) => props.onDraftChange(event.target.value)} placeholder={t("detail.draftPlaceholder")} readOnly={!canSend} />
+              <div className="detail-toolbar compact"><button className="secondary-button" onClick={() => props.onDraftFeedback("useful")} disabled={!canSend}>{t("detail.draftHelpful")}</button><button className="ghost-button" onClick={() => props.onDraftFeedback("bad")} disabled={!canSend}>{t("detail.draftNeedsWork")}</button></div>
+              <div className="detail-toolbar full"><button className="primary-button" onClick={props.onSendReply} disabled={props.actionLoading === "reply" || !canSend}>{props.actionLoading === "reply" ? t("detail.sending") : t("detail.sendDraft")}</button><button className="secondary-button" onClick={props.onGenerateFollowup} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "followup-draft" ? t("detail.generating") : "Generate follow-up"}</button></div>
+            </div>
+
+            {!canSend ? <div className="tiny" style={{ marginTop: 10 }}>{t("detail.viewerHelp")}</div> : null}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
-export function SpamPanel(props: { items: EmailItem[]; onSelectEmail: (id: number) => void }) {
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Spam log</h3><p className="panel-subtitle">Review suspicious items, inspect AI or rule source, and restore anything that should return to the queue.</p></div></div><div className="panel-body"><div className="log-list">{props.items.length === 0 ? <div className="empty-state"><strong>No spam logged</strong><p>Spam-classified items will appear here.</p></div> : props.items.map((item) => <div key={item.id} className="log-item"><div className="queue-main"><div><h4>{item.sender_name || item.sender_email || "Unknown sender"}</h4><p>{item.subject || "No subject"}</p><p>{item.spam_reason || "No spam reason recorded."}</p></div><div className="queue-time">{formatDate(item.spam_action_at || item.date_received)}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className="badge priority-spam">{item.spam_source || "spam"}</span>{item.spam_action_actor ? <span className="badge">{item.spam_action_actor}</span> : null}<button className="secondary-button" onClick={() => props.onSelectEmail(item.id)}>Review</button></div></div>)}</div></div></section>;
+export function SpamPanel(props: { className?: string; items: EmailItem[]; onSelectEmail: (id: number) => void }) {
+  return <section className={`panel ${props.className || ""}`.trim()}><div className="panel-header"><div><h3 className="panel-title">Spam log</h3><p className="panel-subtitle">Review suspicious items, inspect AI or rule source, and restore anything that should return to the queue.</p></div></div><div className="panel-body"><div className="log-list">{props.items.length === 0 ? <div className="empty-state"><strong>No spam logged</strong><p>Spam-classified items will appear here.</p></div> : props.items.map((item) => <div key={item.id} className="log-item"><div className="queue-main"><div><h4>{item.sender_name || item.sender_email || "Unknown sender"}</h4><p>{item.subject || "No subject"}</p><p>{item.spam_reason || "No spam reason recorded."}</p></div><div className="queue-time">{formatDate(item.spam_action_at || item.date_received)}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className="badge priority-spam">{item.spam_source || "spam"}</span>{item.spam_action_actor ? <span className="badge">{item.spam_action_actor}</span> : null}<button className="secondary-button" onClick={() => props.onSelectEmail(item.id)}>Review</button></div></div>)}</div></div></section>;
 }
 
 export function CatchupPanel(props: { digest: CatchupDigestResponse | null; actionLoading: string | null; onMarkSeen: () => void; onOpenEmail: (id: number) => void }) {
@@ -1266,13 +1612,14 @@ export function ReportsPanel(props: { reportType: string; reportDateFrom: string
 }
 
 export function SettingsPanel(props: { settings: SettingsResponse | null; preferences: PreferenceProfile | null; rules: AutomationRule[]; templates: MessageTemplate[]; mailboxes: MailboxItem[]; users: UserItem[]; currentUser: UserItem | null; userForm: typeof initialUserForm; onUserFormChange: React.Dispatch<React.SetStateAction<typeof initialUserForm>>; onCreateUser: (event: React.FormEvent) => void; onDisableUser: (userId: number) => void; form: typeof initialSettingsForm; mailboxForm: MailboxFormState; templateForm: TemplateFormState; onChange: React.Dispatch<React.SetStateAction<typeof initialSettingsForm>>; onMailboxFormChange: React.Dispatch<React.SetStateAction<MailboxFormState>>; onTemplateFormChange: React.Dispatch<React.SetStateAction<TemplateFormState>>; onSubmit: (event: React.FormEvent) => void; onMailboxSubmit: (event: React.FormEvent) => void; onTemplateSubmit: (event: React.FormEvent) => void; saveSettingsLoading: boolean; onToggleRule: (rule: AutomationRule) => void; onDeleteRule: (ruleId: string) => void; onToggleTemplate: (template: MessageTemplate) => void; onDeleteTemplate: (templateId: string) => void; onToggleMailbox: (mailbox: MailboxItem) => void; onDeleteMailbox: (mailboxId: string) => void; onSetDefaultMailbox: (mailbox: MailboxItem) => void; adminHealth: AdminHealthResponse | null; adminBackups: BackupItem[]; backupStatus: BackupStatusResponse | null; backupIncludeAttachments: boolean; restoreBackupName: string; restoreConfirmation: string; onBackupIncludeAttachmentsChange: (value: boolean) => void; onRestoreBackupNameChange: (value: string) => void; onRestoreConfirmationChange: (value: string) => void; onRefreshAdminDiagnostics: () => void; onCreateBackup: () => void; onRestoreBackup: () => void; actionLoading: string | null }) {
+  const { t: settingsT, i18n: settingsI18n } = useTranslation();
   const canManageSettings = props.currentUser?.role === "admin";
   const canManageRules = props.currentUser?.role === "admin" || props.currentUser?.role === "manager";
   const canManageMailboxes = props.currentUser?.role === "admin";
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Connection settings</h3><p className="panel-subtitle">Edit safe operational settings, learned preferences, active automation rules, and multilingual templates.</p></div></div><div className="panel-body"><form onSubmit={props.onSubmit}><div className="settings-grid"><Field label="App name"><input value={props.form.app_name} onChange={(event) => props.onChange((current) => ({ ...current, app_name: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Environment"><select value={props.form.app_env} onChange={(event) => props.onChange((current) => ({ ...current, app_env: event.target.value }))} disabled={!canManageSettings}><option value="development">development</option><option value="production">production</option></select></Field><Field label="IMAP host"><input value={props.form.imap_host} onChange={(event) => props.onChange((current) => ({ ...current, imap_host: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="IMAP port"><input value={props.form.imap_port} onChange={(event) => props.onChange((current) => ({ ...current, imap_port: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="IMAP user"><input value={props.form.imap_user} onChange={(event) => props.onChange((current) => ({ ...current, imap_user: event.target.value }))} disabled={!canManageSettings} /></Field><Field label={`IMAP password ${props.settings?.has_imap_password ? "(stored)" : ""}`}><input type="password" value={props.form.imap_password} onChange={(event) => props.onChange((current) => ({ ...current, imap_password: event.target.value }))} placeholder="Leave blank to keep current" disabled={!canManageSettings} /></Field><Field label="SMTP host"><input value={props.form.smtp_host} onChange={(event) => props.onChange((current) => ({ ...current, smtp_host: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="SMTP port"><input value={props.form.smtp_port} onChange={(event) => props.onChange((current) => ({ ...current, smtp_port: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="SMTP user"><input value={props.form.smtp_user} onChange={(event) => props.onChange((current) => ({ ...current, smtp_user: event.target.value }))} disabled={!canManageSettings} /></Field><Field label={`SMTP password ${props.settings?.has_smtp_password ? "(stored)" : ""}`}><input type="password" value={props.form.smtp_password} onChange={(event) => props.onChange((current) => ({ ...current, smtp_password: event.target.value }))} placeholder="Leave blank to keep current" disabled={!canManageSettings} /></Field><Field label="DeepSeek base URL"><input value={props.form.deepseek_base_url} onChange={(event) => props.onChange((current) => ({ ...current, deepseek_base_url: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="DeepSeek model"><input value={props.form.deepseek_model} onChange={(event) => props.onChange((current) => ({ ...current, deepseek_model: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Follow-up overdue days"><input value={props.form.followup_overdue_days} onChange={(event) => props.onChange((current) => ({ ...current, followup_overdue_days: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Catch-up threshold (hours)"><input value={props.form.catchup_absence_hours} onChange={(event) => props.onChange((current) => ({ ...current, catchup_absence_hours: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Sent review batch size"><input value={props.form.sent_review_batch_limit} onChange={(event) => props.onChange((current) => ({ ...current, sent_review_batch_limit: event.target.value }))} disabled={!canManageSettings} /></Field><Field label={`AI API key ${props.settings?.has_openai_api_key ? "(stored)" : ""}`}><input type="password" value={props.form.openai_api_key} onChange={(event) => props.onChange((current) => ({ ...current, openai_api_key: event.target.value }))} placeholder="Leave blank to keep current" disabled={!canManageSettings} /></Field><Field label="Scan interval (minutes)"><input value={props.form.scan_interval_minutes} onChange={(event) => props.onChange((current) => ({ ...current, scan_interval_minutes: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="CORS origins" full><input value={props.form.cors_origins} onChange={(event) => props.onChange((current) => ({ ...current, cors_origins: event.target.value }))} placeholder="http://localhost:3000, http://localhost:5173" disabled={!canManageSettings} /></Field></div><div className="settings-note" style={{ marginTop: 16 }}>Follow-up overdue days controls when waiting threads automatically move into the overdue queue.</div><div className="settings-note" style={{ marginTop: 16 }}><strong>Learned preferences</strong><div className="tiny" style={{ marginTop: 8 }}>{props.preferences?.summary_lines?.length ? props.preferences.summary_lines.join(" ") : "No learned preference summary yet. Use feedback controls and send edited drafts to build it."}</div></div><div className="detail-toolbar full" style={{ marginTop: 18 }}><button className="primary-button" type="submit" disabled={props.saveSettingsLoading || !canManageSettings}>{props.saveSettingsLoading ? "Saving..." : "Save settings"}</button></div>{!canManageSettings ? <div className="tiny" style={{ marginTop: 8 }}>Only admin can update platform settings.</div> : null}</form>{props.currentUser?.role === "admin" ? <div className="detail-section" style={{ marginTop: 18 }}><h4>Team users</h4><form onSubmit={props.onCreateUser}><div className="settings-grid"><Field label="Email"><input value={props.userForm.email} onChange={(event) => props.onUserFormChange((current) => ({ ...current, email: event.target.value }))} /></Field><Field label="Full name"><input value={props.userForm.full_name} onChange={(event) => props.onUserFormChange((current) => ({ ...current, full_name: event.target.value }))} /></Field><Field label="Password"><input type="password" value={props.userForm.password} onChange={(event) => props.onUserFormChange((current) => ({ ...current, password: event.target.value }))} /></Field><Field label="Role"><select value={props.userForm.role} onChange={(event) => props.onUserFormChange((current) => ({ ...current, role: event.target.value as UserRole }))}><option value="admin">admin</option><option value="manager">manager</option><option value="operator">operator</option><option value="viewer">viewer</option></select></Field></div><div className="detail-toolbar full" style={{ marginTop: 12 }}><button className="secondary-button" type="submit">Create user</button></div></form><div className="log-list" style={{ marginTop: 12 }}>{props.users.map((user) => <div key={user.id} className="log-item"><div className="queue-main"><div><h4>{user.full_name}</h4><p>{user.email} · {user.role}</p></div><div className="queue-time">{user.is_active ? "active" : "disabled"}</div></div><div className="queue-meta" style={{ marginTop: 10 }}>{user.is_active ? <button className="ghost-button" onClick={() => props.onDisableUser(user.id)}>Disable</button> : null}</div></div>)}</div></div> : null}<div className="detail-section" style={{ marginTop: 18 }}><h4>Add mailbox</h4><form onSubmit={props.onMailboxSubmit}><div className="settings-grid"><Field label="Name"><input value={props.mailboxForm.name} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, name: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="Email address"><input value={props.mailboxForm.email_address} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, email_address: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP host"><input value={props.mailboxForm.imap_host} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_host: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP port"><input value={props.mailboxForm.imap_port} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_port: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP username"><input value={props.mailboxForm.imap_username} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_username: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP password"><input type="password" value={props.mailboxForm.imap_password} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_password: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP host"><input value={props.mailboxForm.smtp_host} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_host: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP port"><input value={props.mailboxForm.smtp_port} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_port: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP username"><input value={props.mailboxForm.smtp_username} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_username: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP password"><input type="password" value={props.mailboxForm.smtp_password} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_password: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP TLS"><select value={String(props.mailboxForm.smtp_use_tls)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_use_tls: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="true">enabled</option><option value="false">disabled</option></select></Field><Field label="SMTP SSL"><select value={String(props.mailboxForm.smtp_use_ssl)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_use_ssl: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="true">enabled</option><option value="false">disabled</option></select></Field><Field label="Enabled"><select value={String(props.mailboxForm.enabled)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, enabled: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="true">enabled</option><option value="false">disabled</option></select></Field><Field label="Default outgoing"><select value={String(props.mailboxForm.is_default_outgoing)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, is_default_outgoing: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="false">no</option><option value="true">yes</option></select></Field></div><div className="detail-toolbar full" style={{ marginTop: 14 }}><button className="secondary-button" type="submit" disabled={!canManageMailboxes}>Add mailbox</button></div>{!canManageMailboxes ? <div className="tiny" style={{ marginTop: 8 }}>Only admin can manage mailbox connections.</div> : null}</form></div><div className="detail-section" style={{ marginTop: 18 }}><h4>Connected mailboxes</h4><div className="log-list">{props.mailboxes.length === 0 ? <div className="empty-state"><strong>No mailbox connected</strong><p>Add one mailbox to start scanning and sending from account context.</p></div> : props.mailboxes.map((mailbox) => <div key={mailbox.id} className="log-item"><div className="queue-main"><div><h4>{mailbox.name}</h4><p>{mailbox.email_address}</p><p>IMAP {mailbox.imap_host}:{mailbox.imap_port} · SMTP {mailbox.smtp_host}:{mailbox.smtp_port}</p></div><div className="queue-time">{mailbox.is_default_outgoing ? "default" : "secondary"}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${mailbox.enabled ? "status-new" : "status-archived"}`}>{mailbox.enabled ? "enabled" : "disabled"}</span>{mailbox.has_imap_password ? <span className="badge">imap secret</span> : null}{mailbox.has_smtp_password ? <span className="badge">smtp secret</span> : null}<button className="secondary-button" onClick={() => props.onToggleMailbox(mailbox)} disabled={!canManageMailboxes}>{mailbox.enabled ? "Disable" : "Enable"}</button><button className="secondary-button" onClick={() => props.onSetDefaultMailbox(mailbox)} disabled={!canManageMailboxes}>Set default</button><button className="ghost-button" onClick={() => props.onDeleteMailbox(mailbox.id)} disabled={!canManageMailboxes}>Delete</button></div></div>)}</div></div><div className="detail-section" style={{ marginTop: 18 }}><h4>Automation rules</h4><div className="log-list">{props.rules.length === 0 ? <div className="empty-state"><strong>No rules yet</strong><p>Create simple sender/domain rules from an email detail view.</p></div> : props.rules.map((rule) => <div key={rule.id} className="log-item"><div className="queue-main"><div><h4>{rule.name}</h4><p>{describeRule(rule)}</p></div><div className="queue-time">order {rule.order}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${rule.enabled ? "status-new" : "status-archived"}`}>{rule.enabled ? "enabled" : "disabled"}</span><button className="secondary-button" onClick={() => props.onToggleRule(rule)} disabled={!canManageRules}>{rule.enabled ? "Disable" : "Enable"}</button><button className="ghost-button" onClick={() => props.onDeleteRule(rule.id)} disabled={!canManageRules}>Delete</button></div></div>)}</div>{!canManageRules ? <div className="tiny" style={{ marginTop: 8 }}>Rule editing is available for admin and manager roles.</div> : null}</div><div className="detail-section" style={{ marginTop: 18 }}><h4>Create template</h4><form onSubmit={props.onTemplateSubmit}><div className="settings-grid"><Field label="Name"><input value={props.templateForm.name} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, name: event.target.value }))} disabled={!canManageRules} /></Field><Field label="Category"><input value={props.templateForm.category} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, category: event.target.value }))} disabled={!canManageRules} /></Field><Field label="Language"><select value={props.templateForm.language} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, language: event.target.value as "ru" | "en" | "tr" }))} disabled={!canManageRules}><option value="ru">Russian</option><option value="en">English</option><option value="tr">Turkish</option></select></Field><Field label="Subject template"><input value={props.templateForm.subject_template} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, subject_template: event.target.value }))} disabled={!canManageRules} /></Field><Field label="Body template" full><textarea rows={5} value={props.templateForm.body_template} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, body_template: event.target.value }))} disabled={!canManageRules} /></Field></div><div className="detail-toolbar full" style={{ marginTop: 14 }}><button className="secondary-button" type="submit" disabled={!canManageRules}>Save template</button></div></form></div><div className="detail-section" style={{ marginTop: 18 }}><h4>Reusable templates</h4><div className="log-list">{props.templates.length === 0 ? <div className="empty-state"><strong>No templates loaded</strong><p>Create one or use the seeded multilingual starter set.</p></div> : props.templates.map((template) => <div key={template.id} className="log-item"><div className="queue-main"><div><h4>{template.name}</h4><p>{template.category} · {template.language.toUpperCase()}</p><p>{template.subject_template || template.body_template.slice(0, 120)}</p></div><div className="queue-time">{template.language.toUpperCase()}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${template.enabled ? "status-new" : "status-archived"}`}>{template.enabled ? "enabled" : "disabled"}</span><button className="secondary-button" onClick={() => props.onToggleTemplate(template)} disabled={!canManageRules}>{template.enabled ? "Disable" : "Enable"}</button><button className="ghost-button" onClick={() => props.onDeleteTemplate(template.id)} disabled={!canManageRules}>Delete</button></div></div>)}</div></div></div></section>;
+  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Connection settings</h3><p className="panel-subtitle">Edit safe operational settings, learned preferences, active automation rules, and multilingual templates.</p></div></div><div className="panel-body"><div className="settings-language"><span className="tiny">{settingsT("settings.language")}</span><div className="language-toggle"><button type="button" className={`ghost-button ${settingsI18n.language.startsWith("en") ? "active-language" : ""}`} onClick={() => void settingsI18n.changeLanguage("en")}>{settingsT("settings.english")}</button><button type="button" className={`ghost-button ${settingsI18n.language.startsWith("ru") ? "active-language" : ""}`} onClick={() => void settingsI18n.changeLanguage("ru")}>{settingsT("settings.russian")}</button></div></div><form onSubmit={props.onSubmit}><div className="settings-grid"><Field label="App name"><input value={props.form.app_name} onChange={(event) => props.onChange((current) => ({ ...current, app_name: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Environment"><select value={props.form.app_env} onChange={(event) => props.onChange((current) => ({ ...current, app_env: event.target.value }))} disabled={!canManageSettings}><option value="development">development</option><option value="production">production</option></select></Field><Field label="IMAP host"><input value={props.form.imap_host} onChange={(event) => props.onChange((current) => ({ ...current, imap_host: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="IMAP port"><input value={props.form.imap_port} onChange={(event) => props.onChange((current) => ({ ...current, imap_port: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="IMAP user"><input value={props.form.imap_user} onChange={(event) => props.onChange((current) => ({ ...current, imap_user: event.target.value }))} disabled={!canManageSettings} /></Field><Field label={`IMAP password ${props.settings?.has_imap_password ? "(stored)" : ""}`}><input type="password" value={props.form.imap_password} onChange={(event) => props.onChange((current) => ({ ...current, imap_password: event.target.value }))} placeholder="Leave blank to keep current" disabled={!canManageSettings} /></Field><Field label="SMTP host"><input value={props.form.smtp_host} onChange={(event) => props.onChange((current) => ({ ...current, smtp_host: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="SMTP port"><input value={props.form.smtp_port} onChange={(event) => props.onChange((current) => ({ ...current, smtp_port: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="SMTP user"><input value={props.form.smtp_user} onChange={(event) => props.onChange((current) => ({ ...current, smtp_user: event.target.value }))} disabled={!canManageSettings} /></Field><Field label={`SMTP password ${props.settings?.has_smtp_password ? "(stored)" : ""}`}><input type="password" value={props.form.smtp_password} onChange={(event) => props.onChange((current) => ({ ...current, smtp_password: event.target.value }))} placeholder="Leave blank to keep current" disabled={!canManageSettings} /></Field><Field label="DeepSeek base URL"><input value={props.form.deepseek_base_url} onChange={(event) => props.onChange((current) => ({ ...current, deepseek_base_url: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="DeepSeek model"><input value={props.form.deepseek_model} onChange={(event) => props.onChange((current) => ({ ...current, deepseek_model: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Follow-up overdue days"><input value={props.form.followup_overdue_days} onChange={(event) => props.onChange((current) => ({ ...current, followup_overdue_days: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Catch-up threshold (hours)"><input value={props.form.catchup_absence_hours} onChange={(event) => props.onChange((current) => ({ ...current, catchup_absence_hours: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="Sent review batch size"><input value={props.form.sent_review_batch_limit} onChange={(event) => props.onChange((current) => ({ ...current, sent_review_batch_limit: event.target.value }))} disabled={!canManageSettings} /></Field><Field label={`AI API key ${props.settings?.has_openai_api_key ? "(stored)" : ""}`}><input type="password" value={props.form.openai_api_key} onChange={(event) => props.onChange((current) => ({ ...current, openai_api_key: event.target.value }))} placeholder="Leave blank to keep current" disabled={!canManageSettings} /></Field><Field label="Scan interval (minutes)"><input value={props.form.scan_interval_minutes} onChange={(event) => props.onChange((current) => ({ ...current, scan_interval_minutes: event.target.value }))} disabled={!canManageSettings} /></Field><Field label="CORS origins" full><input value={props.form.cors_origins} onChange={(event) => props.onChange((current) => ({ ...current, cors_origins: event.target.value }))} placeholder="http://localhost:3000, http://localhost:5173" disabled={!canManageSettings} /></Field></div><div className="settings-note" style={{ marginTop: 16 }}>Follow-up overdue days controls when waiting threads automatically move into the overdue queue.</div><div className="settings-note" style={{ marginTop: 16 }}><strong>Learned preferences</strong><div className="tiny" style={{ marginTop: 8 }}>{props.preferences?.summary_lines?.length ? props.preferences.summary_lines.join(" ") : "No learned preference summary yet. Use feedback controls and send edited drafts to build it."}</div></div><div className="detail-toolbar full" style={{ marginTop: 18 }}><button className="primary-button" type="submit" disabled={props.saveSettingsLoading || !canManageSettings}>{props.saveSettingsLoading ? "Saving..." : "Save settings"}</button></div>{!canManageSettings ? <div className="tiny" style={{ marginTop: 8 }}>Only admin can update platform settings.</div> : null}</form>{props.currentUser?.role === "admin" ? <div className="detail-section" style={{ marginTop: 18 }}><h4>Team users</h4><form onSubmit={props.onCreateUser}><div className="settings-grid"><Field label="Email"><input value={props.userForm.email} onChange={(event) => props.onUserFormChange((current) => ({ ...current, email: event.target.value }))} /></Field><Field label="Full name"><input value={props.userForm.full_name} onChange={(event) => props.onUserFormChange((current) => ({ ...current, full_name: event.target.value }))} /></Field><Field label="Password"><input type="password" value={props.userForm.password} onChange={(event) => props.onUserFormChange((current) => ({ ...current, password: event.target.value }))} /></Field><Field label="Role"><select value={props.userForm.role} onChange={(event) => props.onUserFormChange((current) => ({ ...current, role: event.target.value as UserRole }))}><option value="admin">admin</option><option value="manager">manager</option><option value="operator">operator</option><option value="viewer">viewer</option></select></Field></div><div className="detail-toolbar full" style={{ marginTop: 12 }}><button className="secondary-button" type="submit">Create user</button></div></form><div className="log-list" style={{ marginTop: 12 }}>{props.users.map((user) => <div key={user.id} className="log-item"><div className="queue-main"><div><h4>{user.full_name}</h4><p>{user.email} · {user.role}</p></div><div className="queue-time">{user.is_active ? "active" : "disabled"}</div></div><div className="queue-meta" style={{ marginTop: 10 }}>{user.is_active ? <button className="ghost-button" onClick={() => props.onDisableUser(user.id)}>Disable</button> : null}</div></div>)}</div></div> : null}<div className="detail-section" style={{ marginTop: 18 }}><h4>Add mailbox</h4><form onSubmit={props.onMailboxSubmit}><div className="settings-grid"><Field label="Name"><input value={props.mailboxForm.name} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, name: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="Email address"><input value={props.mailboxForm.email_address} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, email_address: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP host"><input value={props.mailboxForm.imap_host} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_host: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP port"><input value={props.mailboxForm.imap_port} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_port: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP username"><input value={props.mailboxForm.imap_username} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_username: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="IMAP password"><input type="password" value={props.mailboxForm.imap_password} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, imap_password: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP host"><input value={props.mailboxForm.smtp_host} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_host: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP port"><input value={props.mailboxForm.smtp_port} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_port: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP username"><input value={props.mailboxForm.smtp_username} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_username: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP password"><input type="password" value={props.mailboxForm.smtp_password} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_password: event.target.value }))} disabled={!canManageMailboxes} /></Field><Field label="SMTP TLS"><select value={String(props.mailboxForm.smtp_use_tls)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_use_tls: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="true">enabled</option><option value="false">disabled</option></select></Field><Field label="SMTP SSL"><select value={String(props.mailboxForm.smtp_use_ssl)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, smtp_use_ssl: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="true">enabled</option><option value="false">disabled</option></select></Field><Field label="Enabled"><select value={String(props.mailboxForm.enabled)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, enabled: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="true">enabled</option><option value="false">disabled</option></select></Field><Field label="Default outgoing"><select value={String(props.mailboxForm.is_default_outgoing)} onChange={(event) => props.onMailboxFormChange((current) => ({ ...current, is_default_outgoing: event.target.value === "true" }))} disabled={!canManageMailboxes}><option value="false">no</option><option value="true">yes</option></select></Field></div><div className="detail-toolbar full" style={{ marginTop: 14 }}><button className="secondary-button" type="submit" disabled={!canManageMailboxes}>Add mailbox</button></div>{!canManageMailboxes ? <div className="tiny" style={{ marginTop: 8 }}>Only admin can manage mailbox connections.</div> : null}</form></div><div className="detail-section" style={{ marginTop: 18 }}><h4>Connected mailboxes</h4><div className="log-list">{props.mailboxes.length === 0 ? <div className="empty-state"><strong>No mailbox connected</strong><p>Add one mailbox to start scanning and sending from account context.</p></div> : props.mailboxes.map((mailbox) => <div key={mailbox.id} className="log-item"><div className="queue-main"><div><h4>{mailbox.name}</h4><p>{mailbox.email_address}</p><p>IMAP {mailbox.imap_host}:{mailbox.imap_port} · SMTP {mailbox.smtp_host}:{mailbox.smtp_port}</p></div><div className="queue-time">{mailbox.is_default_outgoing ? "default" : "secondary"}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${mailbox.enabled ? "status-new" : "status-archived"}`}>{mailbox.enabled ? "enabled" : "disabled"}</span>{mailbox.has_imap_password ? <span className="badge">imap secret</span> : null}{mailbox.has_smtp_password ? <span className="badge">smtp secret</span> : null}<button className="secondary-button" onClick={() => props.onToggleMailbox(mailbox)} disabled={!canManageMailboxes}>{mailbox.enabled ? "Disable" : "Enable"}</button><button className="secondary-button" onClick={() => props.onSetDefaultMailbox(mailbox)} disabled={!canManageMailboxes}>Set default</button><button className="ghost-button" onClick={() => props.onDeleteMailbox(mailbox.id)} disabled={!canManageMailboxes}>Delete</button></div></div>)}</div></div><div className="detail-section" style={{ marginTop: 18 }}><h4>Automation rules</h4><div className="log-list">{props.rules.length === 0 ? <div className="empty-state"><strong>No rules yet</strong><p>Create simple sender/domain rules from an email detail view.</p></div> : props.rules.map((rule) => <div key={rule.id} className="log-item"><div className="queue-main"><div><h4>{rule.name}</h4><p>{describeRule(rule)}</p></div><div className="queue-time">order {rule.order}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${rule.enabled ? "status-new" : "status-archived"}`}>{rule.enabled ? "enabled" : "disabled"}</span><button className="secondary-button" onClick={() => props.onToggleRule(rule)} disabled={!canManageRules}>{rule.enabled ? "Disable" : "Enable"}</button><button className="ghost-button" onClick={() => props.onDeleteRule(rule.id)} disabled={!canManageRules}>Delete</button></div></div>)}</div>{!canManageRules ? <div className="tiny" style={{ marginTop: 8 }}>Rule editing is available for admin and manager roles.</div> : null}</div><div className="detail-section" style={{ marginTop: 18 }}><h4>Create template</h4><form onSubmit={props.onTemplateSubmit}><div className="settings-grid"><Field label="Name"><input value={props.templateForm.name} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, name: event.target.value }))} disabled={!canManageRules} /></Field><Field label="Category"><input value={props.templateForm.category} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, category: event.target.value }))} disabled={!canManageRules} /></Field><Field label="Language"><select value={props.templateForm.language} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, language: event.target.value as "ru" | "en" | "tr" }))} disabled={!canManageRules}><option value="ru">Russian</option><option value="en">English</option><option value="tr">Turkish</option></select></Field><Field label="Subject template"><input value={props.templateForm.subject_template} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, subject_template: event.target.value }))} disabled={!canManageRules} /></Field><Field label="Body template" full><textarea rows={5} value={props.templateForm.body_template} onChange={(event) => props.onTemplateFormChange((current) => ({ ...current, body_template: event.target.value }))} disabled={!canManageRules} /></Field></div><div className="detail-toolbar full" style={{ marginTop: 14 }}><button className="secondary-button" type="submit" disabled={!canManageRules}>Save template</button></div></form></div><div className="detail-section" style={{ marginTop: 18 }}><h4>Reusable templates</h4><div className="log-list">{props.templates.length === 0 ? <div className="empty-state"><strong>No templates loaded</strong><p>Create one or use the seeded multilingual starter set.</p></div> : props.templates.map((template) => <div key={template.id} className="log-item"><div className="queue-main"><div><h4>{template.name}</h4><p>{template.category} · {template.language.toUpperCase()}</p><p>{template.subject_template || template.body_template.slice(0, 120)}</p></div><div className="queue-time">{template.language.toUpperCase()}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${template.enabled ? "status-new" : "status-archived"}`}>{template.enabled ? "enabled" : "disabled"}</span><button className="secondary-button" onClick={() => props.onToggleTemplate(template)} disabled={!canManageRules}>{template.enabled ? "Disable" : "Enable"}</button><button className="ghost-button" onClick={() => props.onDeleteTemplate(template.id)} disabled={!canManageRules}>Delete</button></div></div>)}</div></div></div></section>;
 }
 
-export function NavButton(props: { label: string; active: boolean; badge?: number; onClick: () => void }) { return <button className={`nav-button ${props.active ? "active" : ""}`} onClick={props.onClick}><span>{props.label}</span>{typeof props.badge === "number" ? <span className="nav-badge">{props.badge}</span> : null}</button>; }
+export function NavButton(props: { label: string; active: boolean; badge?: number; onClick: () => void }) { return <button className={`nav-button ${props.active ? "active" : ""}`} onClick={props.onClick} title={props.label}><span>{props.label}</span>{typeof props.badge === "number" ? <span className="nav-badge">{props.badge}</span> : null}</button>; }
 export function StatCard(props: { label: string; value: number }) { return <div className="stat-card"><span>{props.label}</span><strong>{props.value}</strong></div>; }
 export function SummaryPoint(props: { title: string; value: string }) { return <div className="summary-point"><strong>{props.title}</strong><span>{props.value}</span></div>; }
 export function Field(props: { label: string; children: React.ReactNode; full?: boolean }) { return <div className={`field ${props.full ? "full" : ""}`}><label>{props.label}</label>{props.children}</div>; }
@@ -1452,8 +1799,8 @@ async function refreshAccessToken(): Promise<string | null> {
 function getErrorMessage(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
 function formatDate(value?: string | null) { if (!value) return "No date"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }
 function normalizePriority(priority?: string | null) { const normalized = (priority || "medium").toLowerCase(); return ["critical", "high", "medium", "low", "spam"].includes(normalized) ? normalized : "medium"; }
-function getViewTitle(view: ViewKey) { if (view === "focus") return "Focus workspace"; if (view === "active") return "Active queue"; if (view === "waiting") return "Waiting queue"; if (view === "spam") return "Spam review log"; if (view === "reports") return "Reports and exports"; return "System settings"; }
-function getViewSubtitle(view: ViewKey, focusSummary: string) { if (view === "focus") return focusSummary; if (view === "active") return "Move from AI analysis to a sent reply without leaving the board."; if (view === "waiting") return "Track outbound conversations, overdue threads, and suggested follow-ups."; if (view === "spam") return "Audit blocked messages, see AI or rule source, and restore mistakes quickly."; if (view === "reports") return "Generate period-based activity and follow-up reports, then export or email them."; return "Manage connection settings, learned preferences, and operational rules."; }
+function getViewTitle(view: ViewKey) { if (view === "focus") return "Focus workspace"; if (view === "active") return "Active queue"; if (view === "sent") return "Sent mailbox"; if (view === "waiting") return "Waiting queue"; if (view === "spam") return "Spam review log"; if (view === "reports") return "Reports and exports"; return "System settings"; }
+function getViewSubtitle(view: ViewKey, focusSummary: string) { if (view === "focus") return focusSummary; if (view === "active") return "Move from AI analysis to a sent reply without leaving the board."; if (view === "sent") return "Review outbound traffic and quality notes in one place."; if (view === "waiting") return "Track outbound conversations, overdue threads, and suggested follow-ups."; if (view === "spam") return "Audit blocked messages, see AI or rule source, and restore mistakes quickly."; if (view === "reports") return "Generate period-based activity and follow-up reports, then export or email them."; return "Manage connection settings, learned preferences, and operational rules."; }
 
 function buildQuickRulePayload(email: EmailItem, template: QuickRuleTemplate): { name: string; conditions: Record<string, unknown>; actions: Record<string, unknown> } | null {
   const senderEmail = (email.sender_email || "").trim().toLowerCase();
@@ -1482,3 +1829,4 @@ function describeRule(rule: AutomationRule): string {
   const actions = Object.entries(rule.actions || {}).map(([key, value]) => `${key}=${String(value)}`).join(", ");
   return `If ${conditions || "matched"} then ${actions || "no-op"}.`;
 }
+

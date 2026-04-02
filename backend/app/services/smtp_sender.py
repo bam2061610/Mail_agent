@@ -1,8 +1,11 @@
 import smtplib
 import ssl
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -33,23 +36,24 @@ def send_reply(
     bcc: list[str] | None = None,
     references: list[str] | None = None,
 ) -> SendReplyResult:
-    if not to:
+    to_addresses = _normalize_recipients(to)
+    if not to_addresses:
         raise ValueError("At least one recipient is required")
     smtp_username = getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None)
     if not config.smtp_host or not smtp_username or not config.smtp_password:
         raise ValueError("SMTP credentials are not fully configured")
 
-    cc = cc or []
-    bcc = bcc or []
-    recipients = [address for address in [*to, *cc, *bcc] if address]
+    cc_addresses = _normalize_recipients(cc)
+    bcc_addresses = _normalize_recipients(bcc)
+    recipients = list(dict.fromkeys([*to_addresses, *cc_addresses, *bcc_addresses]))
     if not recipients:
         raise ValueError("No valid recipients were provided")
 
     message = EmailMessage()
     message["From"] = getattr(config, "email_address", None) or smtp_username
-    message["To"] = ", ".join(to)
-    if cc:
-        message["Cc"] = ", ".join(cc)
+    message["To"] = ", ".join(to_addresses)
+    if cc_addresses:
+        message["Cc"] = ", ".join(cc_addresses)
     message["Subject"] = subject
     if reply_to_message_id:
         message["In-Reply-To"] = reply_to_message_id
@@ -61,7 +65,15 @@ def send_reply(
 
     try:
         _deliver_message(message, recipients, config)
-    except Exception as exc:  # noqa: BLE001
+    except (smtplib.SMTPException, OSError, RuntimeError) as exc:
+        logger.exception(
+            "SMTP reply send failed: host=%s to=%s cc=%s bcc_count=%s subject=%s",
+            getattr(config, "smtp_host", None),
+            to_addresses,
+            cc_addresses,
+            len(bcc_addresses),
+            subject,
+        )
         raise RuntimeError(f"SMTP send failed: {exc}") from exc
 
     return SendReplyResult(
@@ -75,19 +87,26 @@ def send_reply(
 def _deliver_message(message: EmailMessage, recipients: list[str], config) -> None:
     context = ssl.create_default_context()
 
-    if getattr(config, "smtp_use_ssl", False):
-        with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, context=context, timeout=30) as server:
+    try:
+        if getattr(config, "smtp_use_ssl", False):
+            with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, context=context, timeout=30) as server:
+                server.login(getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None), config.smtp_password)
+                server.send_message(message, to_addrs=recipients)
+            return
+
+        with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=30) as server:
+            server.ehlo()
+            if getattr(config, "smtp_use_tls", True):
+                server.starttls(context=context)
+                server.ehlo()
             server.login(getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None), config.smtp_password)
             server.send_message(message, to_addrs=recipients)
-        return
-
-    with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=30) as server:
-        server.ehlo()
-        if getattr(config, "smtp_use_tls", True):
-            server.starttls(context=context)
-            server.ehlo()
-        server.login(getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None), config.smtp_password)
-        server.send_message(message, to_addrs=recipients)
+    except smtplib.SMTPAuthenticationError as exc:
+        logger.error("SMTP authentication failed for host=%s user=%s", getattr(config, "smtp_host", None), getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None))
+        raise RuntimeError("SMTP authentication failed") from exc
+    except (smtplib.SMTPException, OSError) as exc:
+        logger.error("SMTP delivery transport error host=%s port=%s: %s", getattr(config, "smtp_host", None), getattr(config, "smtp_port", None), exc)
+        raise RuntimeError(str(exc)) from exc
 
 
 def send_email(
@@ -99,30 +118,54 @@ def send_email(
     cc: list[str] | None = None,
     bcc: list[str] | None = None,
 ) -> SendEmailResult:
-    if not to:
+    to_addresses = _normalize_recipients(to)
+    if not to_addresses:
         raise ValueError("At least one recipient is required")
     smtp_username = getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None)
     if not config.smtp_host or not smtp_username or not config.smtp_password:
         raise ValueError("SMTP credentials are not fully configured")
 
-    cc = cc or []
-    bcc = bcc or []
-    recipients = [address for address in [*to, *cc, *bcc] if address]
+    cc_addresses = _normalize_recipients(cc)
+    bcc_addresses = _normalize_recipients(bcc)
+    recipients = list(dict.fromkeys([*to_addresses, *cc_addresses, *bcc_addresses]))
     if not recipients:
         raise ValueError("No valid recipients were provided")
 
     message = EmailMessage()
     message["From"] = getattr(config, "email_address", None) or smtp_username
-    message["To"] = ", ".join(to)
-    if cc:
-        message["Cc"] = ", ".join(cc)
+    message["To"] = ", ".join(to_addresses)
+    if cc_addresses:
+        message["Cc"] = ", ".join(cc_addresses)
     message["Subject"] = subject
     message["Message-ID"] = make_msgid()
     message.set_content(body)
-    _deliver_message(message, recipients, config)
+    try:
+        _deliver_message(message, recipients, config)
+    except (smtplib.SMTPException, OSError, RuntimeError) as exc:
+        logger.exception(
+            "SMTP email send failed: host=%s to=%s cc=%s bcc_count=%s subject=%s",
+            getattr(config, "smtp_host", None),
+            to_addresses,
+            cc_addresses,
+            len(bcc_addresses),
+            subject,
+        )
+        raise RuntimeError(f"SMTP send failed: {exc}") from exc
     return SendEmailResult(
         status="sent",
         message_id=message["Message-ID"],
         recipients=recipients,
         subject=subject,
     )
+
+
+def _normalize_recipients(addresses: list[str] | None) -> list[str]:
+    if not addresses:
+        return []
+    cleaned: list[str] = []
+    for item in addresses:
+        value = (item or "").strip()
+        if not value or value in cleaned:
+            continue
+        cleaned.append(value)
+    return cleaned

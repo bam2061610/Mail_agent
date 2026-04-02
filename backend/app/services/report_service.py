@@ -11,6 +11,7 @@ from app.models.action_log import ActionLog
 from app.models.email import Email
 from app.models.task import Task
 from app.models.user import User
+from app.services.mailbox_service import SENT_DIRECTION_VALUES
 
 
 @dataclass(slots=True)
@@ -26,7 +27,7 @@ class ReportFilters:
 
 def build_activity_report(db: Session, filters: ReportFilters) -> dict[str, Any]:
     email_query = _filtered_email_query(db, filters)
-    sent_count = email_query.filter(Email.direction == "sent").count()
+    sent_count = email_query.filter(Email.direction.in_(SENT_DIRECTION_VALUES)).count()
     received_count = email_query.filter(Email.direction == "inbound").count()
     spam_count = email_query.filter(Email.is_spam.is_(True)).count()
 
@@ -152,7 +153,7 @@ def build_followup_report(db: Session, filters: ReportFilters) -> dict[str, Any]
 
 
 def build_sent_review_report(db: Session, filters: ReportFilters) -> dict[str, Any]:
-    query = _filtered_email_query(db, filters).filter(Email.direction == "sent")
+    query = _filtered_email_query(db, filters).filter(Email.direction.in_(SENT_DIRECTION_VALUES))
     rows = query.order_by(Email.date_received.desc().nullslast(), Email.id.desc()).limit(300).all()
     verdict_counts: dict[str, int] = {}
     problematic = 0
@@ -247,6 +248,35 @@ def build_team_activity_report(db: Session, filters: ReportFilters) -> dict[str,
         },
         "rows": rows,
     }
+
+
+def normalize_recipient_addresses(addresses: list[str] | None) -> list[str]:
+    if not addresses:
+        return []
+    cleaned: list[str] = []
+    for item in addresses:
+        value = (item or "").strip()
+        if not value or value in cleaned:
+            continue
+        cleaned.append(value)
+    return cleaned
+
+
+def build_report_email_body(payload: dict[str, Any], *, max_summary_lines: int = 30) -> str:
+    summary_lines = [f"{key}: {value}" for key, value in (payload.get("summary") or {}).items()]
+    rows = payload.get("rows") or []
+    lines = [
+        "Orhun Mail Agent report",
+        "",
+        f"Type: {payload.get('report_type', 'unknown')}",
+        f"Generated at: {payload.get('generated_at', '')}",
+        f"Rows in report: {len(rows)}",
+        "",
+        "Summary",
+        "-------",
+        *summary_lines[:max_summary_lines],
+    ]
+    return "\n".join(lines)
 
 
 def _filtered_email_query(db: Session, filters: ReportFilters):

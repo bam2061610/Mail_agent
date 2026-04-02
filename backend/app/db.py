@@ -76,6 +76,7 @@ def _ensure_email_columns() -> None:
         "assigned_to_user_id": "INTEGER",
         "assigned_by_user_id": "INTEGER",
         "assigned_at": "DATETIME",
+        "sent_by_user_id": "INTEGER",
         "sent_review_summary": "TEXT",
         "sent_review_status": "VARCHAR(50)",
         "sent_review_issues_json": "TEXT",

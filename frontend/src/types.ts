@@ -1,4 +1,4 @@
-export type ViewKey = "focus" | "active" | "waiting" | "spam" | "reports" | "settings";
+export type ViewKey = "focus" | "active" | "sent" | "waiting" | "spam" | "reports" | "settings";
 export type UserRole = "admin" | "manager" | "operator" | "viewer";
 
 export type EmailItem = {
@@ -36,6 +36,7 @@ export type EmailItem = {
   assigned_to_user_id?: number | null;
   assigned_by_user_id?: number | null;
   assigned_at?: string | null;
+  sent_by_user_id?: number | null;
   sent_review_summary?: string | null;
   sent_review_status?: string | null;
   sent_review_issues_json?: string | null;

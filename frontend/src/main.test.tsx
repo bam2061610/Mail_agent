@@ -66,7 +66,8 @@ function buildAuthenticatedRoutes(user = adminUser): Record<string, RouteRespons
     "GET /api/stats": { body: { new_count: 0, waiting_reply_count: 0, analyzed_today_count: 0, total_inbox_count: 0, spam_count: 0, waiting_count: 0, overdue_count: 0, followup_due_today_count: 0 } },
     "GET /api/digest": { body: { date: "2026-04-02", emails_received_today: 0, important_emails: 0, unanswered_emails: 0, analyzed_count: 0 } },
     "GET /api/digest/catchup": { body: { generated_at: "2026-04-02T10:00:00Z", since: "2026-04-02T00:00:00Z", away_hours: 8, should_show: false, important_new: [], waiting_or_overdue: [], spam_review: [], recent_sent: [], followups_due: [], top_actions: [] } },
-    "GET /api/emails?limit=60": { body: [] },
+    "GET /api/emails?limit=60&direction=inbound": { body: [] },
+    "GET /api/emails?limit=60&direction=sent": { body: [] },
     "GET /api/sent/reviews?limit=30": { body: [] },
     "GET /api/followups": { body: [] },
     "GET /api/spam?limit=40": { body: [] },
@@ -174,4 +175,45 @@ it("surfaces bootstrap failures and returns to login when stored token is invali
   await screen.findByText("Team login");
   expect(await screen.findByRole("alert")).toHaveTextContent("Invalid or expired token");
   expect(localStorage.getItem("oma_token")).toBeNull();
+});
+
+it("shows sent mailbox with per-message summary and original body blocks", async () => {
+  const sentItem = {
+    id: 42,
+    subject: "Re: Pricing update",
+    sender_email: "ops@orhun.local",
+    sender_name: "Ops Team",
+    status: "replied",
+    ai_analyzed: true,
+    requires_reply: false,
+    is_spam: false,
+    date_received: "2026-04-02T12:00:00Z",
+    ai_summary: "Shared final pricing confirmation and next delivery steps.",
+    body_text: "Thanks for your patience. We confirmed pricing and timeline.",
+  };
+  installFetchMock({
+    "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
+    ...buildAuthenticatedRoutes(adminUser),
+    "GET /api/emails?limit=60&direction=sent": { body: [sentItem] },
+    "GET /api/emails/42": { body: { ...sentItem, folder: "sent", direction: "sent", thread_id: "thread-42", created_at: "2026-04-02T11:50:00Z", updated_at: "2026-04-02T12:00:00Z" } },
+    "GET /api/emails/42/thread": {
+      body: {
+        thread_id: "thread-42",
+        emails: [{ ...sentItem, folder: "sent", direction: "sent", thread_id: "thread-42", created_at: "2026-04-02T11:50:00Z", updated_at: "2026-04-02T12:00:00Z" }],
+      },
+    },
+    "GET /api/emails/42/attachments": { body: [] },
+  });
+
+  render(<App />);
+
+  await screen.findByText("Team login");
+  await userEvent.click(screen.getByRole("button", { name: /sign in/i }));
+  await screen.findByText("Admin User (admin)");
+
+  await userEvent.click(screen.getByRole("button", { name: "Sent" }));
+
+  await screen.findByText("Re: Pricing update");
+  await screen.findByText("Summary");
+  await screen.findByText("Original message");
 });

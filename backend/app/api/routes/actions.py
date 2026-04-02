@@ -26,7 +26,7 @@ from app.schemas.system import (
     SentReviewRunResponse,
 )
 from app.services.ai_analyzer import analyze_pending
-from app.services.attachment_service import get_attachment, get_attachment_file_path
+from app.services.attachment_service import build_attachment_download_payload, get_attachment
 from app.services.diagnostics_service import mark_analyze_result, mark_scan_result
 from app.services.followup_tracker import get_waiting_threads
 from app.services.imap_scanner import scan_all_mailboxes
@@ -35,6 +35,7 @@ from app.services.rule_engine import create_rule, delete_rule, list_rules, reord
 from app.services.sent_review_service import review_pending_sent
 from app.services.spam_service import list_spam_emails
 from app.services.template_service import create_template, delete_template, list_templates, update_template
+from app.services.mailbox_service import SENT_DIRECTION_VALUES
 from app.services.permission_service import require_permission
 
 router = APIRouter(tags=["actions"])
@@ -241,7 +242,7 @@ def get_sent_reviews(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("read")),
 ) -> list[EmailListItem]:
-    orm_query = db.query(Email).filter(Email.direction == "sent")
+    orm_query = db.query(Email).filter(Email.direction.in_(SENT_DIRECTION_VALUES))
     if mailbox_id:
         orm_query = orm_query.filter(Email.mailbox_id == mailbox_id)
     if status:
@@ -280,8 +281,9 @@ def download_attachment_by_id(
     attachment = get_attachment(db, attachment_id)
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    file_path = get_attachment_file_path(attachment)
-    if not file_path.exists():
+    try:
+        file_path, _, media_type, headers = build_attachment_download_payload(attachment)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Attachment file missing")
     db.add(
         ActionLog(
@@ -295,8 +297,8 @@ def download_attachment_by_id(
     db.commit()
     return FileResponse(
         path=str(file_path),
-        filename=attachment.filename or file_path.name,
-        media_type=attachment.content_type or "application/octet-stream",
+        media_type=media_type,
+        headers=headers,
     )
 
 

@@ -36,6 +36,7 @@ class EmailListItem(BaseModel):
     assigned_to_user_id: int | None = None
     assigned_by_user_id: int | None = None
     assigned_at: datetime | None = None
+    sent_by_user_id: int | None = None
     sent_review_summary: str | None = None
     sent_review_status: str | None = None
     sent_review_issues_json: str | None = None

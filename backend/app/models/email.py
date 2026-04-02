@@ -47,6 +47,7 @@ class Email(Base):
     assigned_to_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     assigned_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     last_reply_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     sent_review_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_review_status: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)

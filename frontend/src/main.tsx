@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./AppLegacy";
+import "./i18n";
 import "./styles.css";
 
 const rootElement = document.getElementById("root");
