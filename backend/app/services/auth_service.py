@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -17,6 +18,7 @@ TOKENS_FILE_PATH = DATA_DIR / "auth_tokens.json"
 TOKEN_TTL_HOURS = 24
 PBKDF2_ITERATIONS = 210_000
 PBKDF2_DIGEST = "sha256"
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str) -> str:
@@ -142,10 +144,11 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
 
 def _maybe_dev_single_user(db_session: Session) -> User | None:
     settings = get_effective_settings()
-    if getattr(settings, "app_env", "development") != "development":
+    if getattr(settings, "app_env", "development") != "development" or not getattr(settings, "dev_auth_bypass", False):
         return None
     users = db_session.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).limit(2).all()
     if len(users) == 1:
+        logger.warning("Dev auth bypass: auto-authenticating as %s", users[0].email)
         return users[0]
     return None
 
