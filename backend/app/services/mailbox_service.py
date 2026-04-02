@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from types import SimpleNamespace
 from typing import Any
@@ -46,7 +46,7 @@ def get_mailbox(mailbox_id: str, redact_secrets: bool = True) -> dict[str, Any] 
 
 def create_mailbox(payload: dict[str, Any]) -> dict[str, Any]:
     mailboxes = _load_mailboxes()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     mailbox = {
         "id": payload.get("id") or str(uuid4()),
         "name": str(payload.get("name") or payload.get("email_address") or "Mailbox").strip(),
@@ -100,7 +100,7 @@ def update_mailbox(mailbox_id: str, payload: dict[str, Any]) -> dict[str, Any] |
             mailbox["imap_password"] = str(payload["imap_password"])
         if payload.get("smtp_password"):
             mailbox["smtp_password"] = str(payload["smtp_password"])
-        mailbox["updated_at"] = datetime.utcnow().isoformat()
+        mailbox["updated_at"] = datetime.now(timezone.utc).isoformat()
         updated_mailbox = mailbox
         break
     if updated_mailbox is None:

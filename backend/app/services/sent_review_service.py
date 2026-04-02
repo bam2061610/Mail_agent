@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import BaseModel, field_validator
@@ -185,7 +185,7 @@ def review_sent_email(
 
 
 def save_sent_review(db_session: Session, email_record: Email, review: SentReviewResult) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     email_record.sent_review_summary = review.summary
     email_record.sent_review_status = review.verdict
     email_record.sent_review_issues_json = json.dumps(review.issues, ensure_ascii=False)

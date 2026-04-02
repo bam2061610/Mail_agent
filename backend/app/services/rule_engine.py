@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -52,7 +52,7 @@ def list_rules() -> list[dict[str, Any]]:
 
 def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
     rules = _load_rules()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     order = payload.get("order")
     if order is None:
         order = max([int(rule.get("order", 0)) for rule in rules], default=-1) + 1
@@ -89,7 +89,7 @@ def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
             updated["conditions"] = _sanitize_conditions(payload["conditions"])
         if "actions" in payload and payload["actions"] is not None:
             updated["actions"] = _sanitize_actions(payload["actions"])
-        updated["updated_at"] = datetime.utcnow().isoformat()
+        updated["updated_at"] = datetime.now(timezone.utc).isoformat()
         rules[index] = updated
         _save_rules(rules)
         return updated
@@ -111,7 +111,7 @@ def reorder_rules(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for rule in rules:
         if rule.get("id") in order_map:
             rule["order"] = order_map[rule["id"]]
-            rule["updated_at"] = datetime.utcnow().isoformat()
+            rule["updated_at"] = datetime.now(timezone.utc).isoformat()
     _save_rules(rules)
     return list_rules()
 
@@ -248,8 +248,8 @@ def _load_rules() -> list[dict[str, Any]]:
                 "order": int(item.get("order", 0)),
                 "conditions": _sanitize_conditions(item.get("conditions")),
                 "actions": _sanitize_actions(item.get("actions")),
-                "created_at": str(item.get("created_at") or datetime.utcnow().isoformat()),
-                "updated_at": str(item.get("updated_at") or datetime.utcnow().isoformat()),
+                "created_at": str(item.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                "updated_at": str(item.get("updated_at") or datetime.now(timezone.utc).isoformat()),
             }
         )
     return normalized

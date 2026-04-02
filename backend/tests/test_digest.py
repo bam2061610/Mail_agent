@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.models.email import Email
@@ -7,7 +7,7 @@ from app.services.digest_service import generate_catchup_digest, mark_digest_see
 
 
 def test_generate_catchup_digest(db_session):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     db_session.add_all(
         [
             Email(

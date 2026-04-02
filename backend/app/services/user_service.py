@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -72,7 +72,7 @@ def update_user(db_session: Session, user: User, payload: dict) -> User:
         user.language = payload["language"]
     if "is_active" in payload and payload["is_active"] is not None:
         user.is_active = bool(payload["is_active"])
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -81,7 +81,7 @@ def update_user(db_session: Session, user: User, payload: dict) -> User:
 
 def disable_user(db_session: Session, user: User) -> User:
     user.is_active = False
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -90,7 +90,7 @@ def disable_user(db_session: Session, user: User) -> User:
 
 def reset_user_password(db_session: Session, user: User, new_password: str) -> User:
     user.password_hash = hash_password(new_password)
-    user.updated_at = datetime.utcnow()
+    user.updated_at = datetime.now(timezone.utc)
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)

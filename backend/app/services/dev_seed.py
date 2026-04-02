@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.db import SessionLocal, create_tables
 from app.models.contact import Contact
@@ -16,7 +16,7 @@ def seed_demo_data() -> dict[str, int]:
         _ensure_demo_users(db)
         _clear_demo_records(db)
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         emails = [
             Email(
                 message_id="<demo-supplier@test>",

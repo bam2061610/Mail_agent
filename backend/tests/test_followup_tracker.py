@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.email import Email
 from app.services.followup_tracker import (
@@ -47,10 +47,10 @@ def test_detect_overdue_and_wait_days(db_session):
     )
     db_session.add(email)
     db_session.commit()
-    started = datetime.utcnow() - timedelta(days=5)
+    started = datetime.now(timezone.utc) - timedelta(days=5)
     mark_thread_waiting(db_session, thread_id=email.thread_id, started_at=started, email_id=email.id, actor="test")
     db_session.commit()
-    detect_overdue_threads(db_session, now=datetime.utcnow(), threshold_days=3)
+    detect_overdue_threads(db_session, now=datetime.now(timezone.utc), threshold_days=3)
     db_session.commit()
-    wait_days = compute_wait_days(db_session, email.thread_id, now=datetime.utcnow())
+    wait_days = compute_wait_days(db_session, email.thread_id, now=datetime.now(timezone.utc))
     assert wait_days >= 5

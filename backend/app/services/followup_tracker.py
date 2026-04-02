@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -43,7 +43,7 @@ def mark_thread_waiting(
     if not thread_id:
         raise ValueError("thread_id is required")
 
-    now = started_at or datetime.utcnow()
+    now = _as_utc(started_at) or datetime.now(timezone.utc)
     task = _get_or_create_followup_task(db_session, thread_id=thread_id, email_id=email_id)
     latest_email = _get_latest_thread_email(db_session, thread_id)
     task.email_id = email_id or latest_email.id if latest_email else task.email_id
@@ -54,7 +54,7 @@ def mark_thread_waiting(
     task.state = "waiting_reply"
     task.current_step = "waiting_for_partner_reply"
     task.followup_started_at = now
-    task.expected_reply_by = expected_reply_by
+    task.expected_reply_by = _as_utc(expected_reply_by)
     task.closed_at = None
     task.close_reason = None
     db_session.add(task)
@@ -80,7 +80,7 @@ def close_waiting(db_session: Session, thread_id: str, reason: str | None = None
         return None
 
     task.state = "closed"
-    task.closed_at = datetime.utcnow()
+    task.closed_at = datetime.now(timezone.utc)
     task.close_reason = reason
     task.current_step = "closed"
     db_session.add(task)
@@ -96,7 +96,7 @@ def close_waiting(db_session: Session, thread_id: str, reason: str | None = None
 
 
 def get_waiting_threads(db_session: Session, now: datetime | None = None) -> list[WaitingThreadSnapshot]:
-    current_time = now or datetime.utcnow()
+    current_time = _as_utc(now) or datetime.now(timezone.utc)
     detect_overdue_threads(db_session, current_time)
     db_session.flush()
 
@@ -110,7 +110,7 @@ def get_waiting_threads(db_session: Session, now: datetime | None = None) -> lis
 
 
 def detect_overdue_threads(db_session: Session, now: datetime | None = None, threshold_days: int = 3) -> list[Task]:
-    current_time = now or datetime.utcnow()
+    current_time = _as_utc(now) or datetime.now(timezone.utc)
     effective_threshold = max(1, getattr(get_effective_settings(), "followup_overdue_days", threshold_days))
     tasks = (
         db_session.query(Task)
@@ -131,13 +131,16 @@ def compute_wait_days(db_session: Session, thread_id: str, now: datetime | None 
     task = _get_followup_task(db_session, thread_id)
     if task is None or task.followup_started_at is None:
         return 0
-    current_time = now or datetime.utcnow()
-    delta = current_time - task.followup_started_at
+    current_time = _as_utc(now) or datetime.now(timezone.utc)
+    started_at = _as_utc(task.followup_started_at)
+    if started_at is None:
+        return 0
+    delta = current_time - started_at
     return max(0, delta.days)
 
 
 def get_thread_waiting_state(db_session: Session, thread_id: str, now: datetime | None = None) -> WaitingThreadSnapshot | None:
-    current_time = now or datetime.utcnow()
+    current_time = _as_utc(now) or datetime.now(timezone.utc)
     detect_overdue_threads(db_session, current_time)
     task = _get_followup_task(db_session, thread_id)
     if task is None or task.state not in WAITING_STATES:
@@ -179,8 +182,9 @@ def _get_latest_thread_email(db_session: Session, thread_id: str) -> Email | Non
 def _build_snapshot(db_session: Session, task: Task, now: datetime) -> WaitingThreadSnapshot:
     latest_email = _get_latest_thread_email(db_session, task.thread_id or "")
     wait_days = 0
-    if task.followup_started_at is not None:
-        wait_days = max(0, (now - task.followup_started_at).days)
+    started_at = _as_utc(task.followup_started_at)
+    if started_at is not None:
+        wait_days = max(0, (now - started_at).days)
     return WaitingThreadSnapshot(
         task_id=task.id,
         email_id=task.email_id,
@@ -188,8 +192,8 @@ def _build_snapshot(db_session: Session, task: Task, now: datetime) -> WaitingTh
         state=task.state,
         title=task.title,
         subtitle=task.subtitle,
-        started_at=task.followup_started_at,
-        expected_reply_by=task.expected_reply_by,
+        started_at=started_at,
+        expected_reply_by=_as_utc(task.expected_reply_by),
         wait_days=wait_days,
         latest_email_id=latest_email.id if latest_email else None,
         latest_subject=latest_email.subject if latest_email else None,
@@ -202,11 +206,21 @@ def _build_snapshot(db_session: Session, task: Task, now: datetime) -> WaitingTh
 
 
 def _is_overdue(task: Task, now: datetime, threshold_days: int) -> bool:
-    if task.expected_reply_by:
-        return now >= task.expected_reply_by
-    if task.followup_started_at is None:
+    expected_reply_by = _as_utc(task.expected_reply_by)
+    if expected_reply_by:
+        return now >= expected_reply_by
+    followup_started_at = _as_utc(task.followup_started_at)
+    if followup_started_at is None:
         return False
-    return now >= task.followup_started_at + timedelta(days=threshold_days)
+    return now >= followup_started_at + timedelta(days=threshold_days)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _log_action(

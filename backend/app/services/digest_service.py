@@ -27,7 +27,7 @@ class CatchupDigest:
 
 
 def generate_catchup_digest(db_session: Session, config, now: datetime | None = None) -> CatchupDigest:
-    current_time = now or datetime.utcnow()
+    current_time = now or datetime.now(timezone.utc)
     state = _load_state()
     last_seen_at = _parse_dt(state.get("last_seen_at"))
     catchup_hours = max(1, int(getattr(config, "catchup_absence_hours", 8) or 8))
@@ -160,7 +160,7 @@ def generate_catchup_digest(db_session: Session, config, now: datetime | None = 
 
 
 def mark_digest_seen(db_session: Session, when: datetime | None = None) -> dict[str, str]:
-    now = when or datetime.utcnow()
+    now = when or datetime.now(timezone.utc)
     state = _load_state()
     state["last_seen_at"] = now.isoformat()
     state["last_digest_viewed_at"] = now.isoformat()
@@ -253,9 +253,9 @@ def _parse_dt(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    if parsed.tzinfo is not None:
-        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-    return parsed
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _load_state() -> dict:

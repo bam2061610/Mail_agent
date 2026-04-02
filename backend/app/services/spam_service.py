@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -55,7 +55,7 @@ def restore_email_from_spam(db_session: Session, email: Email, actor: str = "use
     email.status = "read"
     email.spam_source = None
     email.spam_reason = None
-    email.updated_at = datetime.utcnow()
+    email.updated_at = datetime.now(timezone.utc)
     db_session.add(email)
     db_session.add(
         ActionLog(
@@ -94,7 +94,7 @@ def confirm_email_spam(
         email.spam_source = "user"
     if not email.spam_reason:
         email.spam_reason = "Confirmed as spam by user"
-    email.updated_at = datetime.utcnow()
+    email.updated_at = datetime.now(timezone.utc)
     db_session.add(email)
     db_session.add(
         ActionLog(

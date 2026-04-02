@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, func, or_
@@ -82,7 +82,7 @@ def build_activity_report(db: Session, filters: ReportFilters) -> dict[str, Any]
 
     return {
         "report_type": "activity",
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "filters": _filters_dict(filters),
         "summary": {
             "sent_emails_count": sent_count,
@@ -120,8 +120,9 @@ def build_followup_report(db: Session, filters: ReportFilters) -> dict[str, Any]
             overdue_count += 1
         latest_email = _latest_thread_email(db, task.thread_id)
         wait_days = 0
-        if task.followup_started_at:
-            wait_days = max(0, (datetime.utcnow() - task.followup_started_at).days)
+        followup_started_at = _as_utc(task.followup_started_at)
+        if followup_started_at:
+            wait_days = max(0, (datetime.now(timezone.utc) - followup_started_at).days)
         payload_rows.append(
             {
                 "task_id": task.id,
@@ -139,7 +140,7 @@ def build_followup_report(db: Session, filters: ReportFilters) -> dict[str, Any]
 
     return {
         "report_type": "followups",
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "filters": _filters_dict(filters),
         "summary": {
             "total_threads": len(payload_rows),
@@ -178,7 +179,7 @@ def build_sent_review_report(db: Session, filters: ReportFilters) -> dict[str, A
         )
     return {
         "report_type": "sent_review",
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "filters": _filters_dict(filters),
         "summary": {
             "total_sent": len(payload_rows),
@@ -237,7 +238,7 @@ def build_team_activity_report(db: Session, filters: ReportFilters) -> dict[str,
     rows.sort(key=lambda item: item["actions_count"], reverse=True)
     return {
         "report_type": "team_activity",
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "filters": _filters_dict(filters),
         "summary": {
             "users_with_activity": len(rows),
@@ -295,8 +296,7 @@ def _parse_date(value: str | None, *, end_of_day: bool = False) -> datetime | No
         parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
+    parsed = _as_utc(parsed)
     if end_of_day and parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
         parsed = parsed + timedelta(days=1) - timedelta(microseconds=1)
     return parsed
@@ -336,7 +336,18 @@ def _thread_wait_days(db: Session, thread_id: str | None) -> int | None:
     )
     if not task or not task.followup_started_at:
         return None
-    return max(0, (datetime.utcnow() - task.followup_started_at).days)
+    followup_started_at = _as_utc(task.followup_started_at)
+    if followup_started_at is None:
+        return None
+    return max(0, (datetime.now(timezone.utc) - followup_started_at).days)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _extract_issue_tokens(raw: str | None) -> list[str]:

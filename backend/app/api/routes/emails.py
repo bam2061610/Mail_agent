@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -196,7 +196,7 @@ def reply_to_email(
 
     original_email.status = "replied"
     original_email.requires_reply = False
-    original_email.last_reply_sent_at = datetime.utcnow()
+    original_email.last_reply_sent_at = datetime.now(timezone.utc)
     db.add(original_email)
 
     sent_email: Email | None = None
@@ -212,7 +212,7 @@ def reply_to_email(
             sender_name=getattr(outgoing_mailbox, "name", None),
             recipients_json=json.dumps([{"email": address, "name": None} for address in to_addresses], ensure_ascii=False),
             cc_json=json.dumps([{"email": address, "name": None} for address in request.cc], ensure_ascii=False),
-            date_received=datetime.utcnow(),
+            date_received=datetime.now(timezone.utc),
             body_text=request.body,
             folder="sent",
             direction="sent",
@@ -235,7 +235,7 @@ def reply_to_email(
     mark_thread_waiting(
         db_session=db,
         thread_id=thread_key,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(timezone.utc),
         email_id=original_email.id,
         actor="api",
     )
@@ -506,7 +506,7 @@ def start_waiting(
     mark_thread_waiting(
         db_session=db,
         thread_id=email.thread_id or email.message_id or f"email-{email.id}",
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(timezone.utc),
         expected_reply_by=request.expected_reply_by,
         email_id=email.id,
         actor=current_user.email,
@@ -814,7 +814,7 @@ def assign_email(
 
     email.assigned_to_user_id = target_user.id
     email.assigned_by_user_id = current_user.id
-    email.assigned_at = datetime.utcnow()
+    email.assigned_at = datetime.now(timezone.utc)
     db.add(email)
 
     thread_key = email.thread_id or email.message_id
@@ -823,7 +823,7 @@ def assign_email(
         for task in tasks:
             task.assigned_to_user_id = target_user.id
             task.assigned_by_user_id = current_user.id
-            task.assigned_at = datetime.utcnow()
+            task.assigned_at = datetime.now(timezone.utc)
             task.assigned_to = target_user.email
             db.add(task)
 
@@ -860,7 +860,7 @@ def unassign_email(
 
     email.assigned_to_user_id = None
     email.assigned_by_user_id = current_user.id
-    email.assigned_at = datetime.utcnow()
+    email.assigned_at = datetime.now(timezone.utc)
     db.add(email)
 
     thread_key = email.thread_id or email.message_id
@@ -869,7 +869,7 @@ def unassign_email(
         for task in tasks:
             task.assigned_to_user_id = None
             task.assigned_by_user_id = current_user.id
-            task.assigned_at = datetime.utcnow()
+            task.assigned_at = datetime.now(timezone.utc)
             task.assigned_to = None
             db.add(task)
 
@@ -922,10 +922,10 @@ def _upsert_contact(
         contact.name = name
     if increment_received:
         contact.emails_received_count = int(contact.emails_received_count or 0) + 1
-        contact.last_contact_at = datetime.utcnow()
+        contact.last_contact_at = datetime.now(timezone.utc)
     if increment_sent:
         contact.emails_sent_count = int(contact.emails_sent_count or 0) + 1
-        contact.last_contact_at = datetime.utcnow()
+        contact.last_contact_at = datetime.now(timezone.utc)
     db.add(contact)
 
 

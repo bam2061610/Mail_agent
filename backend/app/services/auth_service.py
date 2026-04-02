@@ -4,8 +4,7 @@ import hmac
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
@@ -56,7 +55,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 def create_session_token(user: User) -> str:
     token = secrets.token_urlsafe(48)
-    expires_at = datetime.utcnow() + timedelta(hours=TOKEN_TTL_HOURS)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=TOKEN_TTL_HOURS)
     payload = _load_tokens()
     payload[token] = {
         "user_id": user.id,
@@ -80,7 +79,7 @@ def authenticate_user(db_session: Session, email: str, password: str) -> User | 
         return None
     if not verify_password(password, user.password_hash):
         return None
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = datetime.now(timezone.utc)
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -93,7 +92,7 @@ def get_user_by_token(db_session: Session, token: str) -> User | None:
     if not record:
         return None
     expires_at = _parse_dt(record.get("expires_at"))
-    if expires_at is None or expires_at < datetime.utcnow():
+    if expires_at is None or expires_at < datetime.now(timezone.utc):
         payload.pop(token, None)
         _save_tokens(payload)
         return None
@@ -174,6 +173,9 @@ def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

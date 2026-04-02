@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -25,7 +25,7 @@ def get_template(template_id: str) -> dict[str, Any] | None:
 
 def create_template(payload: dict[str, Any]) -> dict[str, Any]:
     templates = _load_templates()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     template = {
         "id": payload.get("id") or str(uuid4()),
         "name": str(payload.get("name") or "Untitled template").strip() or "Untitled template",
@@ -57,7 +57,7 @@ def update_template(template_id: str, payload: dict[str, Any]) -> dict[str, Any]
             updated["language"] = _normalize_language(payload["language"]) or updated["language"]
         if "enabled" in payload and payload["enabled"] is not None:
             updated["enabled"] = bool(payload["enabled"])
-        updated["updated_at"] = datetime.utcnow().isoformat()
+        updated["updated_at"] = datetime.now(timezone.utc).isoformat()
         templates[index] = updated
         _save_templates(templates)
         return updated
@@ -118,7 +118,7 @@ def _normalize_text(value: Any) -> str | None:
 
 
 def _default_templates() -> list[dict[str, Any]]:
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     defaults = [
         ("ack", "Acknowledgment / thanks", "general", "en", "Re: {{subject}}", "Hello {{recipient_name}},\n\nThank you for your email. We have received your message and will review the details shortly.\n\nBest regards,\nOrhun Medical"),
         ("clarify", "Request for clarification", "clarification", "en", "Re: {{subject}}", "Hello {{recipient_name}},\n\nThank you for your message. Could you please clarify the requested details so we can proceed quickly?\n\nBest regards,\nOrhun Medical"),

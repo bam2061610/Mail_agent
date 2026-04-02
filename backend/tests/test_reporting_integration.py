@@ -1,11 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models.email import Email
 from app.models.task import Task
 
 
 def test_activity_report_and_exports(client, db_session, admin_auth_headers):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     inbound = Email(
         message_id="<report-in@test>",
         thread_id="<report-thread@test>",
