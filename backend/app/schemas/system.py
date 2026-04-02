@@ -268,6 +268,10 @@ class AuthLoginRequest(BaseModel):
     password: str
 
 
+class AuthRefreshRequest(BaseModel):
+    access_token: str | None = None
+
+
 class AuthLoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

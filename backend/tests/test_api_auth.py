@@ -29,6 +29,41 @@ def test_auth_logout_revokes_session_token(client, db_session, admin_user):
     assert db_session.query(SessionToken).filter(SessionToken.token == token).first() is None
 
 
+def test_auth_refresh_rotates_token_and_me_works_with_new_token(client, db_session, admin_user):
+    login = client.post("/api/auth/login", json={"email": admin_user.email, "password": "admin123"})
+    assert login.status_code == 200
+    old_token = login.json()["access_token"]
+
+    refresh = client.post(
+        "/api/auth/refresh",
+        json={"access_token": old_token},
+        headers={"Authorization": f"Bearer {old_token}"},
+    )
+    assert refresh.status_code == 200
+    new_token = refresh.json()["access_token"]
+    assert new_token != old_token
+    assert db_session.query(SessionToken).filter(SessionToken.token == old_token).first() is None
+    assert db_session.query(SessionToken).filter(SessionToken.token == new_token).first() is not None
+
+    old_me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {old_token}"})
+    assert old_me.status_code == 401
+    new_me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {new_token}"})
+    assert new_me.status_code == 200
+    assert new_me.json()["user"]["email"] == admin_user.email
+
+
+def test_auth_refresh_rejects_invalid_or_missing_token(client, admin_user):
+    invalid = client.post(
+        "/api/auth/refresh",
+        json={"access_token": "not-a-valid-token"},
+        headers={"Authorization": "Bearer not-a-valid-token"},
+    )
+    assert invalid.status_code == 401
+
+    missing = client.post("/api/auth/refresh", json={})
+    assert missing.status_code == 401
+
+
 def test_cleanup_expired_session_tokens(db_session, admin_user):
     expired = SessionToken(
         token="expired-token",

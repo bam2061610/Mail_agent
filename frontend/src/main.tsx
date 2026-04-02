@@ -204,7 +204,7 @@ const initialMailboxForm: MailboxFormState = {
 };
 
 export function App() {
-  const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem("oma_token") || "");
+  const [authToken, setAuthToken] = useState<string>(() => getStoredAuthToken());
   const [currentUser, setCurrentUser] = useState<UserItem | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginForm, setLoginForm] = useState(initialLoginForm);
@@ -267,7 +267,7 @@ export function App() {
       const me = await apiGet<AuthMeResponse>("/api/auth/me");
       setCurrentUser(me.user);
     } catch (error) {
-      localStorage.removeItem("oma_token");
+      clearStoredAuthToken();
       setAuthToken("");
       setCurrentUser(null);
       setErrorMessage(getErrorMessage(error, "Session expired. Please sign in again."));
@@ -287,7 +287,7 @@ export function App() {
     setActionLoading("auth-login");
     try {
       const response = await apiPost<AuthLoginResponse>("/api/auth/login", loginForm);
-      localStorage.setItem("oma_token", response.access_token);
+      saveStoredAuthToken(response.access_token);
       setAuthToken(response.access_token);
       setCurrentUser(response.user);
       setSuccessMessage("Logged in.");
@@ -305,7 +305,7 @@ export function App() {
     } catch {
       // best effort logout
     } finally {
-      localStorage.removeItem("oma_token");
+      clearStoredAuthToken();
       setAuthToken("");
       setCurrentUser(null);
       setErrorMessage("");
@@ -313,6 +313,16 @@ export function App() {
       setActionLoading(null);
     }
   }
+
+  useEffect(() => {
+    const handleTokenUpdate = () => setAuthToken(getStoredAuthToken());
+    window.addEventListener(AUTH_TOKEN_UPDATED_EVENT, handleTokenUpdate);
+    window.addEventListener(AUTH_TOKEN_CLEARED_EVENT, handleTokenUpdate);
+    return () => {
+      window.removeEventListener(AUTH_TOKEN_UPDATED_EVENT, handleTokenUpdate);
+      window.removeEventListener(AUTH_TOKEN_CLEARED_EVENT, handleTokenUpdate);
+    };
+  }, []);
 
   useEffect(() => { void bootstrapAuth(); }, [authToken]);
   useEffect(() => { if (currentUser) void loadInitialData(); }, [currentUser]);
@@ -1269,7 +1279,11 @@ function StatCard(props: { label: string; value: number }) { return <div classNa
 function SummaryPoint(props: { title: string; value: string }) { return <div className="summary-point"><strong>{props.title}</strong><span>{props.value}</span></div>; }
 function Field(props: { label: string; children: React.ReactNode; full?: boolean }) { return <div className={`field ${props.full ? "full" : ""}`}><label>{props.label}</label>{props.children}</div>; }
 
+const AUTH_TOKEN_STORAGE_KEY = "oma_token";
+const AUTH_TOKEN_UPDATED_EVENT = "oma-auth-token-updated";
+const AUTH_TOKEN_CLEARED_EVENT = "oma-auth-token-cleared";
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
+let refreshTokenPromise: Promise<string | null> | null = null;
 
 function normalizeApiBaseUrl(rawValue: string | undefined): string {
   const value = (rawValue || "").trim();
@@ -1285,7 +1299,7 @@ function buildApiUrl(url: string): string {
 function buildApiHeaders(includeJson: boolean): Record<string, string> {
   const headers: Record<string, string> = {};
   if (includeJson) headers["Content-Type"] = "application/json";
-  const token = localStorage.getItem("oma_token");
+  const token = getStoredAuthToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
@@ -1337,6 +1351,13 @@ async function apiDownload(url: string, filename: string): Promise<void> {
 async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
   try {
     const response = await fetch(buildApiUrl(url), init);
+    if (response.status === 401 && shouldTryTokenRefresh(url)) {
+      const refreshedToken = await refreshAccessToken();
+      if (refreshedToken) {
+        const retryResponse = await fetch(buildApiUrl(url), withAuthHeader(init, refreshedToken));
+        return parseResponse<T>(retryResponse);
+      }
+    }
     return parseResponse<T>(response);
   } catch (error) {
     if (error instanceof TypeError) {
@@ -1363,6 +1384,72 @@ async function parseResponse<T>(response: Response): Promise<T> {
     throw new Error(detail);
   }
   return (await response.json()) as T;
+}
+function shouldTryTokenRefresh(url: string): boolean {
+  return !url.includes("/api/auth/login") && !url.includes("/api/auth/refresh");
+}
+
+function getStoredAuthToken(): string {
+  return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+}
+
+function saveStoredAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  window.dispatchEvent(new Event(AUTH_TOKEN_UPDATED_EVENT));
+}
+
+function clearStoredAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  window.dispatchEvent(new Event(AUTH_TOKEN_CLEARED_EVENT));
+}
+
+function withAuthHeader(init: RequestInit, token: string): RequestInit {
+  const headers = new Headers(init.headers || undefined);
+  headers.set("Authorization", `Bearer ${token}`);
+  return { ...init, headers };
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshTokenPromise) {
+    return refreshTokenPromise;
+  }
+
+  refreshTokenPromise = (async () => {
+    const token = getStoredAuthToken();
+    if (!token) {
+      return null;
+    }
+    try {
+      const response = await fetch(buildApiUrl("/api/auth/refresh"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ access_token: token }),
+      });
+      if (!response.ok) {
+        clearStoredAuthToken();
+        return null;
+      }
+      const payload = (await response.json()) as AuthLoginResponse;
+      if (!payload.access_token) {
+        clearStoredAuthToken();
+        return null;
+      }
+      saveStoredAuthToken(payload.access_token);
+      return payload.access_token;
+    } catch {
+      clearStoredAuthToken();
+      return null;
+    }
+  })();
+
+  try {
+    return await refreshTokenPromise;
+  } finally {
+    refreshTokenPromise = null;
+  }
 }
 function getErrorMessage(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
 function formatDate(value?: string | null) { if (!value) return "No date"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }

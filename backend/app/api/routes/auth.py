@@ -6,11 +6,20 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models.action_log import ActionLog
 from app.models.user import User
-from app.schemas.system import AuthLoginRequest, AuthLoginResponse, AuthMeResponse, OperationStatusResponse, UserResponse
+from app.schemas.system import (
+    AuthLoginRequest,
+    AuthLoginResponse,
+    AuthMeResponse,
+    AuthRefreshRequest,
+    OperationStatusResponse,
+    UserResponse,
+)
 from app.services.auth_service import (
     authenticate_user,
     create_session_token,
+    extract_bearer_token,
     get_current_user,
+    get_user_by_token,
     revoke_session_token,
 )
 
@@ -63,4 +72,32 @@ def logout(
 @router.get("/me", response_model=AuthMeResponse)
 def me(current_user: User = Depends(get_current_user)) -> AuthMeResponse:
     return AuthMeResponse(user=UserResponse.model_validate(current_user))
+
+
+@router.post("/refresh", response_model=AuthLoginResponse)
+def refresh_token(
+    request: AuthRefreshRequest,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> AuthLoginResponse:
+    token = request.access_token or extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    user = get_user_by_token(db, token)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+
+    new_token = create_session_token(db, user)
+    revoke_session_token(db, token)
+    db.add(
+        ActionLog(
+            user_id=user.id,
+            action_type="refresh_token",
+            actor=user.email,
+            details_json=json.dumps({}, ensure_ascii=False),
+        )
+    )
+    db.commit()
+    return AuthLoginResponse(access_token=new_token, user=UserResponse.model_validate(user))
 

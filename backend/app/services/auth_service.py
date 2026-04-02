@@ -125,7 +125,7 @@ def get_current_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User:
-    token = _extract_bearer_token(authorization)
+    token = extract_bearer_token(authorization)
     if not token:
         user = _maybe_dev_single_user(db)
         if user is not None:
@@ -141,13 +141,13 @@ def get_optional_current_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> User | None:
-    token = _extract_bearer_token(authorization)
+    token = extract_bearer_token(authorization)
     if token:
         return get_user_by_token(db, token)
     return _maybe_dev_single_user(db)
 
 
-def _extract_bearer_token(authorization: str | None) -> str | None:
+def extract_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
     parts = authorization.strip().split(" ", 1)
