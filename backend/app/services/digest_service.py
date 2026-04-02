@@ -1,16 +1,15 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from app.config import DATA_DIR
 from app.models.action_log import ActionLog
 from app.models.email import Email
 from app.models.task import Task
 
-STATE_FILE_PATH = Path(__file__).resolve().parents[2] / "data" / "digest_state.json"
+STATE_FILE_PATH = DATA_DIR / "digest_state.json"
 
 
 @dataclass(slots=True)

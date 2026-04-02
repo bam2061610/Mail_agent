@@ -1,14 +1,14 @@
 import json
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.config import DATA_DIR
 from app.models.action_log import ActionLog
 
-PREFERENCE_PROFILE_PATH = Path(__file__).resolve().parents[1] / "data" / "preference_profile.json"
+PREFERENCE_PROFILE_PATH = DATA_DIR / "preference_profile.json"
 
 
 def rebuild_preference_profile(db_session: Session) -> dict[str, Any]:

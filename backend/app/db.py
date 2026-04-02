@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from app.config import settings
+from app.config import DATA_DIR, settings
 
 Base = declarative_base()
 
@@ -15,6 +15,15 @@ def _sqlite_connect_args(database_url: str) -> dict[str, bool]:
     return {}
 
 
+def _sqlite_file_path(database_url: str) -> Path | None:
+    if not database_url.startswith("sqlite:///"):
+        return None
+    raw_path = database_url.replace("sqlite:///", "", 1)
+    if raw_path == ":memory:":
+        return None
+    return Path(raw_path)
+
+
 engine = create_engine(
     settings.database_url,
     connect_args=_sqlite_connect_args(settings.database_url),
@@ -23,8 +32,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def create_tables() -> None:
-    if settings.database_url.startswith("sqlite:///./"):
-        Path("data").mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    sqlite_path = _sqlite_file_path(settings.database_url)
+    if sqlite_path is not None:
+        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
     from app.models import attachment, action_log, contact, email, task, user  # noqa: F401
 

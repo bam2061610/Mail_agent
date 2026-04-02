@@ -6,7 +6,9 @@ from typing import Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-SETTINGS_FILE_PATH = Path(__file__).resolve().parents[1] / "data" / "settings.local.json"
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_DIR = BASE_DIR / "data"
+SETTINGS_FILE_PATH = DATA_DIR / "settings.local.json"
 SECRET_SETTING_KEYS = {
     "imap_password",
     "smtp_password",
@@ -18,7 +20,8 @@ class Settings(BaseSettings):
     app_name: str = Field(default="Orhun Mail Agent", alias="APP_NAME")
     app_env: str = Field(default="development", alias="APP_ENV")
     debug: bool = Field(default=True, alias="DEBUG")
-    database_url: str = Field(default="sqlite:///./data/mail_agent.db", alias="DATABASE_URL")
+    database_url: str = Field(default=f"sqlite:///{(DATA_DIR / 'mail_agent.db').as_posix()}", alias="DATABASE_URL")
+    dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
     imap_host: str = Field(default="", alias="IMAP_HOST")
     imap_port: int = Field(default=993, alias="IMAP_PORT")
     imap_user: str = Field(default="", alias="IMAP_USER")
@@ -45,7 +48,7 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,

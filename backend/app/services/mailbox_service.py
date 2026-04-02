@@ -1,16 +1,16 @@
 import json
 import logging
 from datetime import datetime
-from pathlib import Path
+
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
-from app.config import get_effective_settings
+from app.config import DATA_DIR, get_effective_settings
 
 logger = logging.getLogger(__name__)
 
-MAILBOXES_FILE_PATH = Path(__file__).resolve().parents[2] / "data" / "mailboxes.json"
+MAILBOXES_FILE_PATH = DATA_DIR / "mailboxes.json"
 SECRET_FIELDS = {"imap_password", "smtp_password"}
 
 

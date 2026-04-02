@@ -9,12 +9,13 @@ from email.message import Message
 from email.utils import collapse_rfc2231_value
 from sqlalchemy.orm import Session
 
+from app.config import DATA_DIR
 from app.models.action_log import ActionLog
 from app.models.attachment import Attachment
 
 logger = logging.getLogger(__name__)
 
-ATTACHMENTS_ROOT = Path(__file__).resolve().parents[2] / "data" / "attachments"
+ATTACHMENTS_ROOT = DATA_DIR / "attachments"
 SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 

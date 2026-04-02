@@ -3,18 +3,18 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from app.config import DATA_DIR
 from app.models.action_log import ActionLog
 from app.models.email import Email
 
 logger = logging.getLogger(__name__)
 
-RULES_FILE_PATH = Path(__file__).resolve().parents[2] / "data" / "rules.json"
+RULES_FILE_PATH = DATA_DIR / "rules.json"
 SUPPORTED_CONDITIONS = {
     "sender_email",
     "sender_domain",

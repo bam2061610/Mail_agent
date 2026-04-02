@@ -9,11 +9,11 @@ from pathlib import Path
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.config import get_effective_settings
+from app.config import DATA_DIR, get_effective_settings
 from app.db import get_db
 from app.models.user import User
 
-TOKENS_FILE_PATH = Path(__file__).resolve().parents[2] / "data" / "auth_tokens.json"
+TOKENS_FILE_PATH = DATA_DIR / "auth_tokens.json"
 TOKEN_TTL_HOURS = 24
 PBKDF2_ITERATIONS = 210_000
 PBKDF2_DIGEST = "sha256"
@@ -174,4 +174,3 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
-

@@ -1,10 +1,11 @@
 import json
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-TEMPLATES_FILE_PATH = Path(__file__).resolve().parents[2] / "data" / "templates.json"
+from app.config import DATA_DIR
+
+TEMPLATES_FILE_PATH = DATA_DIR / "templates.json"
 SUPPORTED_LANGUAGES = {"ru", "en", "tr"}
 
 
