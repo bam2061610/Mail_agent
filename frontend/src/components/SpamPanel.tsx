@@ -1,0 +1,1 @@
+export { SpamPanel } from "../AppLegacy";

@@ -1,0 +1,1 @@
+export { ReportsPanel } from "../AppLegacy";

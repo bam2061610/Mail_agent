@@ -1,0 +1,1 @@
+export { SummaryPoint } from "../../AppLegacy";
