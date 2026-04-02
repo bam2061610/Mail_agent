@@ -184,7 +184,7 @@ const initialSettingsForm = {
   deepseek_base_url: "", deepseek_model: "", openai_api_key: "", scan_interval_minutes: "5", followup_overdue_days: "3", catchup_absence_hours: "8", sent_review_batch_limit: "20", cors_origins: ""
 };
 const initialTemplateForm: TemplateFormState = { name: "", category: "general", language: "en", subject_template: "", body_template: "" };
-const initialLoginForm = { email: "admin@orhun.local", password: "admin123" };
+const initialLoginForm = { email: "", password: "" };
 const initialUserForm = { email: "", full_name: "", password: "", role: "operator" as UserRole };
 const initialMailboxForm: MailboxFormState = {
   name: "",
@@ -1081,6 +1081,9 @@ export function App() {
                     {actionLoading === "auth-login" ? "Signing in..." : "Sign in / Войти"}
                   </button>
                 </div>
+                <p className="panel-subtitle" style={{ marginTop: 8, fontSize: 12 }}>
+                  Default credentials on first run: admin@orhun.local / admin123
+                </p>
               </form>
             </div>
           </section>
