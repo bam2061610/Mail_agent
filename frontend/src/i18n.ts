@@ -4,7 +4,7 @@ import enCommon from "./locales/en/common.json";
 import ruCommon from "./locales/ru/common.json";
 
 const storedLanguage = localStorage.getItem("oma_lang");
-const initialLanguage = storedLanguage === "ru" || storedLanguage === "en" ? storedLanguage : "en";
+const initialLanguage = storedLanguage === "ru" || storedLanguage === "en" ? storedLanguage : "ru";
 
 void i18n.use(initReactI18next).init({
   resources: {

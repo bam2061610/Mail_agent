@@ -127,6 +127,53 @@
     "english": "English",
     "russian": "Русский"
   },
+  "focus": {
+    "loadHint": "Load the queue to see the current operating picture.",
+    "summary": "{{waiting}} conversations tracked for reply. {{overdue}} overdue, {{spam}} in spam review, {{important}} important emails today.",
+    "dailySummary": "Daily focus summary",
+    "needFollowup": "{{count}} conversations need a follow-up check.",
+    "unanswered": "{{count}} unanswered items remain.",
+    "inSpam": "{{count}} items in spam review.",
+    "importantToday": "Important today",
+    "queueSize": "Queue size",
+    "rulesEnabled": "Rules enabled",
+    "suggestedFocus": "Suggested focus",
+    "openActive": "Open the active queue to begin triage."
+  },
+  "reports": {
+    "title": "Operational reports",
+    "subtitle": "Select period, preview metrics, export CSV/PDF, and optionally email report snapshots.",
+    "activity": "Activity",
+    "followups": "Follow-ups",
+    "sentReview": "Sent review",
+    "teamActivity": "Team activity",
+    "loadReport": "Load report",
+    "loading": "Loading...",
+    "exportCsv": "CSV",
+    "exportPdf": "PDF",
+    "emailPlaceholder": "report recipient email",
+    "sendReport": "Email report",
+    "sending": "Sending...",
+    "viewerNote": "Viewer role can view/export reports but cannot email them.",
+    "summaryTitle": "Summary",
+    "noSummary": "No summary yet. Load a report first.",
+    "rowsTitle": "Rows preview",
+    "noRows": "No rows for selected filters",
+    "noRowsHint": "Try changing report type or date range."
+  },
+  "sentReviewPanel": {
+    "title": "Sent quality review",
+    "subtitle": "Post-send quality checks for tone, completeness, and action clarity.",
+    "runReview": "Run review",
+    "reviewing": "Reviewing...",
+    "managerOnly": "Only manager/admin can start batch sent-review runs.",
+    "noReviews": "No sent reviews yet",
+    "noReviewsHint": "Send a reply and run review to see outgoing quality notes.",
+    "open": "Open",
+    "helpful": "Helpful",
+    "dismiss": "Dismiss",
+    "pending": "pending"
+  },
   "views": {
     "focus": {
       "title": "Focus workspace",

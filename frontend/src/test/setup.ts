@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
+import i18n from "../i18n";
 
 afterEach(() => {
   cleanup();
@@ -8,6 +9,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear();
+  localStorage.setItem("oma_lang", "en");
+  await i18n.changeLanguage("en");
 });

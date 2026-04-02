@@ -262,18 +262,54 @@ def normalize_recipient_addresses(addresses: list[str] | None) -> list[str]:
     return cleaned
 
 
+REPORT_TYPE_LABELS_EMAIL: dict[str, str] = {
+    "activity": "Активность",
+    "followups": "Ожидания/фоллоу-апы",
+    "sent_review": "Проверка исходящих",
+    "team_activity": "Активность команды",
+}
+
+SUMMARY_KEY_LABELS_EMAIL: dict[str, str] = {
+    "sent_emails_count": "Отправлено",
+    "received_emails_count": "Получено",
+    "active_threads": "Активных тредов",
+    "closed_threads": "Закрытых",
+    "waiting_threads": "В ожидании",
+    "overdue_followups": "Просрочено",
+    "spam_count": "Спам",
+    "restored_from_spam_count": "Восстановлено",
+    "total_threads": "Всего тредов",
+    "overdue_threads": "Просрочено",
+    "total_sent": "Всего отправлено",
+    "problematic_count": "Проблемных",
+    "users_with_activity": "Пользователей",
+    "total_actions": "Действий",
+    "total_sent_replies": "Ответов",
+}
+
+
 def build_report_email_body(payload: dict[str, Any], *, max_summary_lines: int = 30) -> str:
-    summary_lines = [f"{key}: {value}" for key, value in (payload.get("summary") or {}).items()]
+    report_type = payload.get("report_type", "unknown")
+    type_label = REPORT_TYPE_LABELS_EMAIL.get(report_type, report_type)
+    summary_lines = []
+    for key, value in (payload.get("summary") or {}).items():
+        label = SUMMARY_KEY_LABELS_EMAIL.get(key, key)
+        if isinstance(value, dict):
+            formatted = ", ".join(f"{k}: {v}" for k, v in value.items())
+        elif isinstance(value, list):
+            formatted = ", ".join(str(item) for item in value[:5])
+        else:
+            formatted = str(value)
+        summary_lines.append(f"  {label}: {formatted}")
     rows = payload.get("rows") or []
     lines = [
-        "Orhun Mail Agent report",
+        f"Orhun Mail Agent — {type_label}",
         "",
-        f"Type: {payload.get('report_type', 'unknown')}",
-        f"Generated at: {payload.get('generated_at', '')}",
-        f"Rows in report: {len(rows)}",
+        f"Дата: {payload.get('generated_at', '')}",
+        f"Строк в отчёте: {len(rows)}",
         "",
-        "Summary",
-        "-------",
+        "Краткая сводка",
+        "─" * 30,
         *summary_lines[:max_summary_lines],
     ]
     return "\n".join(lines)

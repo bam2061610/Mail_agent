@@ -127,6 +127,53 @@
     "english": "English",
     "russian": "Русский"
   },
+  "focus": {
+    "loadHint": "Загрузите очередь, чтобы увидеть текущую картину.",
+    "summary": "{{waiting}} тредов в ожидании ответа. {{overdue}} просрочено, {{spam}} в спаме, {{important}} важных писем сегодня.",
+    "dailySummary": "Дневная сводка",
+    "needFollowup": "{{count}} тредов требуют фоллоу-ап.",
+    "unanswered": "{{count}} без ответа.",
+    "inSpam": "{{count}} в спаме.",
+    "importantToday": "Важных сегодня",
+    "queueSize": "Размер очереди",
+    "rulesEnabled": "Активных правил",
+    "suggestedFocus": "Рекомендуем",
+    "openActive": "Откройте активную очередь для начала работы."
+  },
+  "reports": {
+    "title": "Операционные отчёты",
+    "subtitle": "Выберите период, просмотрите метрики, экспортируйте CSV/PDF или отправьте по email.",
+    "activity": "Активность",
+    "followups": "Ожидания",
+    "sentReview": "Исходящие",
+    "teamActivity": "Команда",
+    "loadReport": "Загрузить",
+    "loading": "Загрузка...",
+    "exportCsv": "CSV",
+    "exportPdf": "PDF",
+    "emailPlaceholder": "email для отчёта",
+    "sendReport": "Отправить",
+    "sending": "Отправка...",
+    "viewerNote": "Роль viewer может просматривать отчёты, но не отправлять по email.",
+    "summaryTitle": "Сводка",
+    "noSummary": "Сводка пока пуста. Загрузите отчёт.",
+    "rowsTitle": "Данные",
+    "noRows": "Нет данных для выбранных фильтров",
+    "noRowsHint": "Попробуйте изменить тип отчёта или период."
+  },
+  "sentReviewPanel": {
+    "title": "Проверка исходящих",
+    "subtitle": "Автопроверка тона, полноты и ясности отправленных писем.",
+    "runReview": "Запустить проверку",
+    "reviewing": "Проверка...",
+    "managerOnly": "Только менеджер/админ может запускать проверку.",
+    "noReviews": "Проверок пока нет",
+    "noReviewsHint": "Отправьте ответ и запустите проверку.",
+    "open": "Открыть",
+    "helpful": "Полезно",
+    "dismiss": "Скрыть",
+    "pending": "ожидание"
+  },
   "views": {
     "focus": {
       "title": "Фокус-режим",

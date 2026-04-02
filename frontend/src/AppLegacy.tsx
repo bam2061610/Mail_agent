@@ -404,9 +404,14 @@ export function App() {
   }, [sentEmails, sentSearch]);
 
   const focusSummary = useMemo(() => {
-    if (!stats || !digest) return "Load the queue to see the current operating picture for Orhun Mail Agent.";
-    return `${stats.waiting_count} conversations are being tracked for reply. ${stats.overdue_count} are overdue, ${stats.spam_count} items are in spam review, and ${digest.important_emails} important emails landed today.`;
-  }, [digest, stats]);
+    if (!stats || !digest) return t("focus.loadHint");
+    return t("focus.summary", {
+      waiting: stats.waiting_count,
+      overdue: stats.overdue_count,
+      spam: stats.spam_count,
+      important: digest.important_emails,
+    });
+  }, [digest, stats, t]);
 
   const mailboxQuery = selectedMailboxId !== "all" ? `&mailbox_id=${encodeURIComponent(selectedMailboxId)}` : "";
   const canRunScan = currentUser?.role !== "viewer";
@@ -809,14 +814,18 @@ export function App() {
     }
   }
 
+  function reportExportEndpoint() {
+    if (reportType === "followups") return "/api/reports/followups/export";
+    if (reportType === "sent-review") return "/api/reports/sent-review/export";
+    if (reportType === "team-activity") return "/api/reports/team-activity/export";
+    return "/api/reports/activity/export";
+  }
+
   async function handleExportReport(format: "csv" | "pdf") {
     setActionLoading(`report-export-${format}`);
     setErrorMessage("");
     try {
-      if (!["activity", "followups"].includes(reportType)) {
-        throw new Error("Export is currently available for activity and follow-ups reports.");
-      }
-      const exportBase = reportType === "followups" ? "/api/reports/followups/export" : "/api/reports/activity/export";
+      const exportBase = reportExportEndpoint();
       await apiDownload(`${exportBase}?format=${format}${buildReportQuery().replace("?", "&")}`, `${reportType}-report.${format}`);
       setSuccessMessage(`Report exported as ${format.toUpperCase()}.`);
     } catch (error) {
@@ -1274,18 +1283,18 @@ export function App() {
               {view === "focus" ? (
                 <>
                   <div className="panel"><div className="panel-body"><div className="stats-grid">
-                    <StatCard label="Needs reply" value={stats?.waiting_reply_count ?? 0} />
-                    <StatCard label="Waiting" value={stats?.waiting_count ?? 0} />
-                    <StatCard label="Overdue" value={stats?.overdue_count ?? 0} />
-                    <StatCard label="Spam review" value={stats?.spam_count ?? 0} />
+                    <StatCard label={t("queue.needsReply")} value={stats?.waiting_reply_count ?? 0} />
+                    <StatCard label={t("queue.waiting")} value={stats?.waiting_count ?? 0} />
+                    <StatCard label={t("waitingPanel.title")} value={stats?.overdue_count ?? 0} />
+                    <StatCard label={t("nav.spam")} value={stats?.spam_count ?? 0} />
                   </div></div></div>
                   <div className="focus-grid">
-                    <div className="panel"><div className="panel-body"><div className="summary-box"><h3>Daily focus summary</h3><p>{digest ? `${stats?.overdue_count ?? 0} conversations need a follow-up check. ${digest.unanswered_emails} unanswered items remain on the board. ${spamEmails.length} items are waiting in spam review.` : "Digest data is not available yet."}</p></div></div></div>
+                    <div className="panel"><div className="panel-body"><div className="summary-box"><h3>{t("focus.dailySummary")}</h3><p>{digest ? `${t("focus.needFollowup", { count: stats?.overdue_count ?? 0 })} ${t("focus.unanswered", { count: digest.unanswered_emails })} ${t("focus.inSpam", { count: spamEmails.length })}` : t("focus.loadHint")}</p></div></div></div>
                     <div className="column">
-                      <SummaryPoint title="Important arrivals" value={`${digest?.important_emails ?? 0} today`} />
-                      <SummaryPoint title="Queue size" value={`${stats?.total_inbox_count ?? 0} inbound emails`} />
-                      <SummaryPoint title="Automation rules" value={`${rules.filter((rule) => rule.enabled).length} enabled`} />
-                      <SummaryPoint title="Suggested focus" value={activeEmails.find((item) => item.focus_flag)?.subject || activeEmails[0]?.subject || "Open the active queue to begin triage."} />
+                      <SummaryPoint title={t("focus.importantToday")} value={`${digest?.important_emails ?? 0}`} />
+                      <SummaryPoint title={t("focus.queueSize")} value={`${stats?.total_inbox_count ?? 0}`} />
+                      <SummaryPoint title={t("focus.rulesEnabled")} value={`${rules.filter((rule) => rule.enabled).length}`} />
+                      <SummaryPoint title={t("focus.suggestedFocus")} value={activeEmails.find((item) => item.focus_flag)?.subject || activeEmails[0]?.subject || t("focus.openActive")} />
                     </div>
                   </div>
                   <div className="layout-grid">
@@ -1528,6 +1537,8 @@ export function DetailPanel(props: { className?: string; onBackToList?: () => vo
                       || (props.currentUser?.id != null && item.sent_by_user_id === props.currentUser.id)
                       || (props.currentUser?.email && item.sender_email && item.sender_email.toLowerCase() === props.currentUser.email.toLowerCase())
                   );
+                  const summaryText = item.ai_summary || null;
+                  const previewText = item.body_text?.slice(0, 200) || null;
                   return (
                     <details
                       key={item.id}
@@ -1539,19 +1550,17 @@ export function DetailPanel(props: { className?: string; onBackToList?: () => vo
                           <div className="thread-meta">
                             <span className="badge">{item.sender_name || item.sender_email || t("queue.unknownSender")}</span>
                             <span className="badge">{formatDate(item.date_received)}</span>
-                            <span className="badge">{isOutgoing ? "you" : "inbound"}</span>
+                            <span className={`badge ${isOutgoing ? "status-replied" : "status-new"}`}>{isOutgoing ? t("sent.direction") : "→"}</span>
                           </div>
                           <h4>{item.subject || t("queue.noSubject")}</h4>
+                          {summaryText ? <p className="thread-entry-inline-summary">{summaryText}</p> : (previewText ? <p className="thread-entry-inline-summary">{previewText}…</p> : null)}
                         </div>
                       </summary>
                       <div className="thread-entry-content">
-                        <div className="summary-banner">
-                          <h5>{t("detail.summaryHeading")}</h5>
-                          <p>{item.ai_summary || t("detail.noAnalysis")}</p>
-                        </div>
+                        {summaryText ? <div className="summary-banner"><h5>{t("detail.summaryHeading")}</h5><p>{summaryText}</p></div> : null}
                         <div className="message-body">
                           <h5>{t("detail.originalMessage")}</h5>
-                          <p>{item.body_text || t("queue.noPreview")}</p>
+                          <p style={{ whiteSpace: "pre-wrap" }}>{item.body_text || t("queue.noPreview")}</p>
                         </div>
                       </div>
                     </details>
@@ -1564,15 +1573,19 @@ export function DetailPanel(props: { className?: string; onBackToList?: () => vo
               <h4>{t("detail.draftTitle")}</h4>
               <div className="queue-toolbar"><select value={props.replyLanguage} onChange={(event) => props.onReplyLanguageChange(event.target.value as "ru" | "en" | "tr")} disabled={!canSend}><option value="ru">Russian</option><option value="en">English</option><option value="tr">Turkish</option></select><select value={props.selectedTemplateId} onChange={(event) => props.onTemplateChange(event.target.value)} disabled={!canSend}><option value="">{t("detail.noTemplate")}</option>{availableTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select></div>
 
-              <div className="action-menu-row">
-                <details className="action-menu"><summary>{t("detail.rewriteMenu")}</summary><div className="action-menu-body"><button className="secondary-button" onClick={props.onGenerateDraft} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "generate-draft" ? t("detail.generating") : t("detail.generateDraft")}</button><button className="ghost-button" onClick={() => props.onRewriteDraft("shorter")} disabled={Boolean(props.actionLoading) || !canSend}>Shorter</button><button className="ghost-button" onClick={() => props.onRewriteDraft("more formal")} disabled={Boolean(props.actionLoading) || !canSend}>More formal</button><button className="ghost-button" onClick={() => props.onRewriteDraft("softer")} disabled={Boolean(props.actionLoading) || !canSend}>Softer</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Russian", "ru")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateRu")}</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to English", "en")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateEn")}</button><button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Turkish", "tr")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateTr")}</button></div></details>
-                {canManageRules ? <details className="action-menu"><summary>{t("detail.rulesMenu")}</summary><div className="action-menu-body"><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-high")} disabled={Boolean(props.actionLoading)}>Always high</button><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-focus")} disabled={Boolean(props.actionLoading)}>Always focus</button><button className="secondary-button" onClick={() => props.onCreateQuickRule("always-archive")} disabled={Boolean(props.actionLoading)}>Always archive</button><button className="danger-button" onClick={() => props.onCreateQuickRule("always-spam")} disabled={Boolean(props.actionLoading)}>Always spam</button></div></details> : null}
-                <details className="action-menu"><summary>{t("detail.actionMenu")}</summary><div className="action-menu-body"><button className="secondary-button" onClick={() => props.onStatusUpdate("archived")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.archive")}</button><button className="secondary-button" onClick={() => props.onStatusUpdate("replied")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.replyMyself")}</button><button className="secondary-button" onClick={props.selectedEmail.waiting_state ? props.onCloseWaiting : props.onStartWaiting} disabled={Boolean(props.actionLoading) || !canSend}>{props.selectedEmail.waiting_state ? t("detail.closeWaiting") : t("detail.waitingForReply")}</button>{props.allowSpamReview ? <button className="danger-button" onClick={props.onConfirmSpam} disabled={Boolean(props.actionLoading) || !canSpamReview}>{t("detail.confirmSpam")}</button> : <button className="danger-button" onClick={() => props.onStatusUpdate("spam")} disabled={Boolean(props.actionLoading) || !canSpamReview}>{t("detail.markSpam")}</button>}</div></details>
+              <div className="detail-toolbar compact">
+                <button className="secondary-button" onClick={props.onGenerateDraft} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "generate-draft" ? t("detail.generating") : t("detail.generateDraft")}</button>
+                <button className="ghost-button" onClick={() => props.onRewriteDraft("translate to Russian", "ru")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateRu")}</button>
+                <button className="ghost-button" onClick={() => props.onRewriteDraft("translate to English", "en")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.translateEn")}</button>
               </div>
 
               <textarea rows={10} value={props.draftText} onChange={(event) => props.onDraftChange(event.target.value)} placeholder={t("detail.draftPlaceholder")} readOnly={!canSend} />
-              <div className="detail-toolbar compact"><button className="secondary-button" onClick={() => props.onDraftFeedback("useful")} disabled={!canSend}>{t("detail.draftHelpful")}</button><button className="ghost-button" onClick={() => props.onDraftFeedback("bad")} disabled={!canSend}>{t("detail.draftNeedsWork")}</button></div>
-              <div className="detail-toolbar full"><button className="primary-button" onClick={props.onSendReply} disabled={props.actionLoading === "reply" || !canSend}>{props.actionLoading === "reply" ? t("detail.sending") : t("detail.sendDraft")}</button><button className="secondary-button" onClick={props.onGenerateFollowup} disabled={Boolean(props.actionLoading) || !canSend}>{props.actionLoading === "followup-draft" ? t("detail.generating") : "Generate follow-up"}</button></div>
+              <div className="detail-toolbar full">
+                <button className="primary-button" onClick={props.onSendReply} disabled={props.actionLoading === "reply" || !canSend}>{props.actionLoading === "reply" ? t("detail.sending") : t("detail.sendDraft")}</button>
+                <button className="secondary-button" onClick={() => props.onStatusUpdate("archived")} disabled={Boolean(props.actionLoading) || !canSend}>{t("detail.archive")}</button>
+                <button className="secondary-button" onClick={props.selectedEmail.waiting_state ? props.onCloseWaiting : props.onStartWaiting} disabled={Boolean(props.actionLoading) || !canSend}>{props.selectedEmail.waiting_state ? t("detail.closeWaiting") : t("detail.waitingForReply")}</button>
+                {props.allowSpamReview ? <button className="danger-button" onClick={props.onConfirmSpam} disabled={Boolean(props.actionLoading) || !canSpamReview}>{t("detail.confirmSpam")}</button> : <button className="ghost-button" onClick={() => props.onStatusUpdate("spam")} disabled={Boolean(props.actionLoading) || !canSpamReview}>{t("detail.markSpam")}</button>}
+              </div>
             </div>
 
             {!canSend ? <div className="tiny" style={{ marginTop: 10 }}>{t("detail.viewerHelp")}</div> : null}
@@ -1593,7 +1606,8 @@ export function CatchupPanel(props: { digest: CatchupDigestResponse | null; acti
 }
 
 export function SentReviewPanel(props: { items: EmailItem[]; actionLoading: string | null; canRunBatch: boolean; onOpenEmail: (id: number) => void; onRunBatch: () => void; onDismiss: (id: number) => void; onMarkHelpful: (id: number) => void }) {
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Sent quality review</h3><p className="panel-subtitle">Post-send quality checks for tone, completeness, and action clarity.</p></div><button className="secondary-button" onClick={props.onRunBatch} disabled={Boolean(props.actionLoading) || !props.canRunBatch}>{props.actionLoading === "sent-review-run" ? "Reviewing..." : "Run review"}</button></div><div className="panel-body">{!props.canRunBatch ? <div className="tiny" style={{ marginBottom: 10 }}>Only manager/admin can start batch sent-review runs.</div> : null}<div className="log-list">{props.items.length === 0 ? <div className="empty-state"><strong>No sent reviews yet</strong><p>Send a reply and run review to see outgoing quality notes.</p></div> : props.items.slice(0, 8).map((item) => <div key={`sent-${item.id}`} className="log-item"><div className="queue-main"><div><h4>{item.subject || "No subject"}</h4><p>{item.sent_review_summary || "Pending review."}</p><p>{item.sent_review_suggested_improvement || ""}</p></div><div className="queue-time">{formatDate(item.sent_reviewed_at || item.date_received)}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${item.sent_review_status === "good" ? "status-replied" : item.sent_review_status === "problematic" ? "priority-spam" : "status-new"}`}>{item.sent_review_status || "pending"}</span>{item.sent_review_score != null ? <span className="badge">{Math.round(item.sent_review_score)}</span> : null}<button className="secondary-button" onClick={() => props.onOpenEmail(item.id)}>Open</button><button className="ghost-button" onClick={() => props.onMarkHelpful(item.id)} disabled={Boolean(props.actionLoading)}>Helpful</button><button className="ghost-button" onClick={() => props.onDismiss(item.id)} disabled={Boolean(props.actionLoading)}>Dismiss</button></div></div>)}</div></div></section>;
+  const { t } = useTranslation();
+  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">{t("sentReviewPanel.title")}</h3><p className="panel-subtitle">{t("sentReviewPanel.subtitle")}</p></div><button className="secondary-button" onClick={props.onRunBatch} disabled={Boolean(props.actionLoading) || !props.canRunBatch}>{props.actionLoading === "sent-review-run" ? t("sentReviewPanel.reviewing") : t("sentReviewPanel.runReview")}</button></div><div className="panel-body">{!props.canRunBatch ? <div className="tiny" style={{ marginBottom: 10 }}>{t("sentReviewPanel.managerOnly")}</div> : null}<div className="log-list">{props.items.length === 0 ? <div className="empty-state"><strong>{t("sentReviewPanel.noReviews")}</strong><p>{t("sentReviewPanel.noReviewsHint")}</p></div> : props.items.slice(0, 8).map((item) => <div key={`sent-${item.id}`} className="log-item"><div className="queue-main"><div><h4>{item.subject || t("queue.noSubject")}</h4><p>{item.sent_review_summary || t("sentReviewPanel.pending")}</p></div><div className="queue-time">{formatDate(item.sent_reviewed_at || item.date_received)}</div></div><div className="queue-meta" style={{ marginTop: 10 }}><span className={`badge ${item.sent_review_status === "good" ? "status-replied" : item.sent_review_status === "problematic" ? "priority-spam" : "status-new"}`}>{item.sent_review_status || t("sentReviewPanel.pending")}</span>{item.sent_review_score != null ? <span className="badge">{Math.round(item.sent_review_score)}</span> : null}<button className="secondary-button" onClick={() => props.onOpenEmail(item.id)}>{t("sentReviewPanel.open")}</button><button className="ghost-button" onClick={() => props.onMarkHelpful(item.id)} disabled={Boolean(props.actionLoading)}>{t("sentReviewPanel.helpful")}</button></div></div>)}</div></div></section>;
 }
 
 export function AdminOpsPanel(props: { adminHealth: AdminHealthResponse | null; adminBackups: BackupItem[]; backupStatus: BackupStatusResponse | null; backupIncludeAttachments: boolean; restoreBackupName: string; restoreConfirmation: string; onBackupIncludeAttachmentsChange: (value: boolean) => void; onRestoreBackupNameChange: (value: string) => void; onRestoreConfirmationChange: (value: string) => void; onRefreshAdminDiagnostics: () => void; onCreateBackup: () => void; onRestoreBackup: () => void; actionLoading: string | null }) {
@@ -1606,9 +1620,10 @@ export function AdminOpsPanel(props: { adminHealth: AdminHealthResponse | null; 
 }
 
 export function ReportsPanel(props: { reportType: string; reportDateFrom: string; reportDateTo: string; reportMailTo: string; reportData: ReportResponse | null; reportLoading: boolean; actionLoading: string | null; currentUser: UserItem | null; canSendEmail: boolean; onReportTypeChange: (value: string) => void; onDateFromChange: (value: string) => void; onDateToChange: (value: string) => void; onMailToChange: (value: string) => void; onLoad: () => void; onExport: (format: "csv" | "pdf") => void; onSend: () => void }) {
+  const { t } = useTranslation();
   const canTeamReport = props.currentUser?.role === "admin" || props.currentUser?.role === "manager";
   const summaryEntries = Object.entries(props.reportData?.summary || {});
-  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">Operational reports</h3><p className="panel-subtitle">Select period, preview metrics, export CSV/PDF, and optionally email report snapshots.</p></div></div><div className="panel-body"><div className="queue-toolbar"><select value={props.reportType} onChange={(event) => props.onReportTypeChange(event.target.value)}><option value="activity">Activity</option><option value="followups">Follow-ups</option><option value="sent-review">Sent review</option>{canTeamReport ? <option value="team-activity">Team activity</option> : null}</select><input type="date" value={props.reportDateFrom} onChange={(event) => props.onDateFromChange(event.target.value)} /><input type="date" value={props.reportDateTo} onChange={(event) => props.onDateToChange(event.target.value)} /><button className="secondary-button" onClick={props.onLoad} disabled={props.reportLoading}>{props.reportLoading ? "Loading..." : "Load report"}</button></div><div className="detail-toolbar" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => props.onExport("csv")} disabled={Boolean(props.actionLoading)}>Export CSV</button><button className="secondary-button" onClick={() => props.onExport("pdf")} disabled={Boolean(props.actionLoading)}>Export PDF</button><input value={props.reportMailTo} onChange={(event) => props.onMailToChange(event.target.value)} placeholder="report recipient email" disabled={!props.canSendEmail} /><button className="primary-button" onClick={props.onSend} disabled={props.actionLoading === "report-send" || !props.canSendEmail}>{props.actionLoading === "report-send" ? "Sending..." : "Email report"}</button></div>{!props.canSendEmail ? <div className="tiny" style={{ marginTop: 8 }}>Viewer role can view/export reports but cannot email them.</div> : null}<div className="detail-section" style={{ marginTop: 16 }}><h4>Summary</h4>{summaryEntries.length === 0 ? <div className="tiny">No summary yet. Load a report first.</div> : <div className="log-list">{summaryEntries.map(([key, value]) => <div key={key} className="log-item"><div className="queue-main"><div><h4>{key}</h4><p>{String(value)}</p></div></div></div>)}</div>}</div><div className="detail-section" style={{ marginTop: 16 }}><h4>Rows preview</h4><div className="log-list">{!(props.reportData?.rows?.length) ? <div className="empty-state"><strong>No rows for selected filters</strong><p>Try changing report type or date range.</p></div> : props.reportData!.rows.slice(0, 25).map((row, idx) => <div key={`${props.reportData?.report_type}-${idx}`} className="log-item"><div className="queue-main"><div><h4>{String(row["subject"] || row["thread_id"] || row["user_email"] || `row-${idx + 1}`)}</h4><p>{Object.entries(row).slice(0, 5).map(([k, v]) => `${k}: ${String(v)}`).join(" | ")}</p></div></div></div>)}</div></div></div></section>;
+  return <section className="panel"><div className="panel-header"><div><h3 className="panel-title">{t("reports.title")}</h3><p className="panel-subtitle">{t("reports.subtitle")}</p></div></div><div className="panel-body"><div className="queue-toolbar"><select value={props.reportType} onChange={(event) => props.onReportTypeChange(event.target.value)}><option value="activity">{t("reports.activity")}</option><option value="followups">{t("reports.followups")}</option><option value="sent-review">{t("reports.sentReview")}</option>{canTeamReport ? <option value="team-activity">{t("reports.teamActivity")}</option> : null}</select><input type="date" value={props.reportDateFrom} onChange={(event) => props.onDateFromChange(event.target.value)} /><input type="date" value={props.reportDateTo} onChange={(event) => props.onDateToChange(event.target.value)} /><button className="secondary-button" onClick={props.onLoad} disabled={props.reportLoading}>{props.reportLoading ? t("reports.loading") : t("reports.loadReport")}</button></div><div className="detail-toolbar" style={{ marginTop: 12 }}><button className="secondary-button" onClick={() => props.onExport("csv")} disabled={Boolean(props.actionLoading)}>{t("reports.exportCsv")}</button><button className="secondary-button" onClick={() => props.onExport("pdf")} disabled={Boolean(props.actionLoading)}>{t("reports.exportPdf")}</button><input value={props.reportMailTo} onChange={(event) => props.onMailToChange(event.target.value)} placeholder={t("reports.emailPlaceholder")} disabled={!props.canSendEmail} /><button className="primary-button" onClick={props.onSend} disabled={props.actionLoading === "report-send" || !props.canSendEmail}>{props.actionLoading === "report-send" ? t("reports.sending") : t("reports.sendReport")}</button></div>{!props.canSendEmail ? <div className="tiny" style={{ marginTop: 8 }}>{t("reports.viewerNote")}</div> : null}<div className="detail-section" style={{ marginTop: 16 }}><h4>{t("reports.summaryTitle")}</h4>{summaryEntries.length === 0 ? <div className="tiny">{t("reports.noSummary")}</div> : <div className="log-list">{summaryEntries.map(([key, value]) => <div key={key} className="log-item"><div className="queue-main"><div><h4>{key}</h4><p>{String(value)}</p></div></div></div>)}</div>}</div><div className="detail-section" style={{ marginTop: 16 }}><h4>{t("reports.rowsTitle")}</h4><div className="log-list">{!(props.reportData?.rows?.length) ? <div className="empty-state"><strong>{t("reports.noRows")}</strong><p>{t("reports.noRowsHint")}</p></div> : props.reportData!.rows.slice(0, 25).map((row, idx) => <div key={`${props.reportData?.report_type}-${idx}`} className="log-item"><div className="queue-main"><div><h4>{String(row["subject"] || row["thread_id"] || row["user_email"] || `row-${idx + 1}`)}</h4><p>{Object.entries(row).slice(0, 5).map(([k, v]) => `${k}: ${String(v)}`).join(" | ")}</p></div></div></div>)}</div></div></div></section>;
 }
 
 export function SettingsPanel(props: { settings: SettingsResponse | null; preferences: PreferenceProfile | null; rules: AutomationRule[]; templates: MessageTemplate[]; mailboxes: MailboxItem[]; users: UserItem[]; currentUser: UserItem | null; userForm: typeof initialUserForm; onUserFormChange: React.Dispatch<React.SetStateAction<typeof initialUserForm>>; onCreateUser: (event: React.FormEvent) => void; onDisableUser: (userId: number) => void; form: typeof initialSettingsForm; mailboxForm: MailboxFormState; templateForm: TemplateFormState; onChange: React.Dispatch<React.SetStateAction<typeof initialSettingsForm>>; onMailboxFormChange: React.Dispatch<React.SetStateAction<MailboxFormState>>; onTemplateFormChange: React.Dispatch<React.SetStateAction<TemplateFormState>>; onSubmit: (event: React.FormEvent) => void; onMailboxSubmit: (event: React.FormEvent) => void; onTemplateSubmit: (event: React.FormEvent) => void; saveSettingsLoading: boolean; onToggleRule: (rule: AutomationRule) => void; onDeleteRule: (ruleId: string) => void; onToggleTemplate: (template: MessageTemplate) => void; onDeleteTemplate: (templateId: string) => void; onToggleMailbox: (mailbox: MailboxItem) => void; onDeleteMailbox: (mailboxId: string) => void; onSetDefaultMailbox: (mailbox: MailboxItem) => void; adminHealth: AdminHealthResponse | null; adminBackups: BackupItem[]; backupStatus: BackupStatusResponse | null; backupIncludeAttachments: boolean; restoreBackupName: string; restoreConfirmation: string; onBackupIncludeAttachmentsChange: (value: boolean) => void; onRestoreBackupNameChange: (value: string) => void; onRestoreConfirmationChange: (value: string) => void; onRefreshAdminDiagnostics: () => void; onCreateBackup: () => void; onRestoreBackup: () => void; actionLoading: string | null }) {
@@ -1799,8 +1814,8 @@ async function refreshAccessToken(): Promise<string | null> {
 function getErrorMessage(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
 function formatDate(value?: string | null) { if (!value) return "No date"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }
 function normalizePriority(priority?: string | null) { const normalized = (priority || "medium").toLowerCase(); return ["critical", "high", "medium", "low", "spam"].includes(normalized) ? normalized : "medium"; }
-function getViewTitle(view: ViewKey) { if (view === "focus") return "Focus workspace"; if (view === "active") return "Active queue"; if (view === "sent") return "Sent mailbox"; if (view === "waiting") return "Waiting queue"; if (view === "spam") return "Spam review log"; if (view === "reports") return "Reports and exports"; return "System settings"; }
-function getViewSubtitle(view: ViewKey, focusSummary: string) { if (view === "focus") return focusSummary; if (view === "active") return "Move from AI analysis to a sent reply without leaving the board."; if (view === "sent") return "Review outbound traffic and quality notes in one place."; if (view === "waiting") return "Track outbound conversations, overdue threads, and suggested follow-ups."; if (view === "spam") return "Audit blocked messages, see AI or rule source, and restore mistakes quickly."; if (view === "reports") return "Generate period-based activity and follow-up reports, then export or email them."; return "Manage connection settings, learned preferences, and operational rules."; }
+function getViewTitle(_view: ViewKey) { return ""; }
+function getViewSubtitle(_view: ViewKey, _focusSummary: string) { return ""; }
 
 function buildQuickRulePayload(email: EmailItem, template: QuickRuleTemplate): { name: string; conditions: Record<string, unknown>; actions: Record<string, unknown> } | null {
   const senderEmail = (email.sender_email || "").trim().toLowerCase();

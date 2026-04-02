@@ -2,7 +2,7 @@ import hashlib
 import imaplib
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email import policy
 from email.header import decode_header
 from email.message import Message
@@ -84,8 +84,26 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
     return connection
 
 
-def scan_inbox(db_session: Session, settings) -> ScanSummary:
-    connection = connect_imap(settings)
+MAX_INITIAL_SCAN_DAYS = 10
+
+
+def _imap_date_criterion(days_back: int = MAX_INITIAL_SCAN_DAYS) -> str:
+    """Return IMAP SINCE criterion for the last N days."""
+    since_date = datetime.now(timezone.utc) - timedelta(days=days_back)
+    return f'SINCE {since_date.strftime("%d-%b-%Y")}'
+
+
+def _scan_folder(
+    connection: imaplib.IMAP4_SSL,
+    db_session: Session,
+    folder: str,
+    mailbox_id: str,
+    mailbox_name: str | None,
+    mailbox_address: str | None,
+    existing_message_ids: set[str],
+    direction: str = "inbound",
+) -> tuple[int, int, int, int, list[str]]:
+    """Scan a single IMAP folder. Returns (scanned, fetched, created, skipped, errors)."""
     errors: list[str] = []
     scanned_messages = 0
     fetched_messages = 0
@@ -93,44 +111,123 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
     skipped_count = 0
 
     try:
-        status, _ = connection.select("INBOX", readonly=True)
+        status, _ = connection.select(folder, readonly=True)
         if status != "OK":
-            raise RuntimeError("Unable to select INBOX")
+            return 0, 0, 0, 0, [f"Unable to select folder {folder}"]
+    except imaplib.IMAP4.error:
+        return 0, 0, 0, 0, [f"Folder {folder} does not exist or is not accessible"]
 
-        status, data = connection.search(None, "ALL")
-        if status != "OK":
-            raise RuntimeError("Unable to search INBOX")
+    search_criterion = _imap_date_criterion()
+    status, data = connection.search(None, search_criterion)
+    if status != "OK":
+        return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
 
-        message_uids = [uid for uid in data[0].split() if uid]
-        scanned_messages = len(message_uids)
-        mailbox_id = getattr(settings, "id", "default")
-        existing_message_ids = _load_existing_message_ids(db_session, mailbox_id)
+    message_uids = [uid for uid in data[0].split() if uid]
+    scanned_messages = len(message_uids)
 
-        for uid in message_uids:
-            header_message_id = _fetch_header_message_id(connection, uid)
-            if header_message_id and header_message_id in existing_message_ids:
+    for uid in message_uids:
+        header_message_id = _fetch_header_message_id(connection, uid)
+        if header_message_id and header_message_id in existing_message_ids:
+            skipped_count += 1
+            continue
+
+        try:
+            raw_message = _fetch_full_message(connection, uid)
+            fetched_messages += 1
+            parsed_message = parse_email_message(raw_message)
+            if direction == "sent":
+                parsed_message.direction = "sent"
+                parsed_message.folder = folder.lower()
+            result = save_parsed_email(
+                db_session,
+                parsed_message,
+                mailbox_id=str(mailbox_id),
+                mailbox_name=mailbox_name,
+                mailbox_address=mailbox_address,
+            )
+            if result.status == "created":
+                created_count += 1
+                existing_message_ids.add(result.message_id)
+            else:
                 skipped_count += 1
-                continue
+        except Exception as exc:  # noqa: BLE001
+            db_session.rollback()
+            errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: {exc}")
 
-            try:
-                raw_message = _fetch_full_message(connection, uid)
-                fetched_messages += 1
-                parsed_message = parse_email_message(raw_message)
-                result = save_parsed_email(
-                    db_session,
-                    parsed_message,
-                    mailbox_id=str(mailbox_id),
-                    mailbox_name=getattr(settings, "name", None),
-                    mailbox_address=getattr(settings, "email_address", None),
-                )
-                if result.status == "created":
-                    created_count += 1
-                    existing_message_ids.add(result.message_id)
-                else:
-                    skipped_count += 1
-            except Exception as exc:  # noqa: BLE001
-                db_session.rollback()
-                errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: {exc}")
+    return scanned_messages, fetched_messages, created_count, skipped_count, errors
+
+
+SENT_FOLDER_NAMES = [
+    "Sent", "INBOX.Sent", "Sent Messages", "Sent Items",
+    "[Gmail]/Sent Mail", "[Gmail]/&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
+    "INBOX.Sent Messages", "INBOX.Sent Items",
+]
+
+
+def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
+    """Try to locate the Sent folder by common names."""
+    try:
+        status, folder_list = connection.list()
+        if status != "OK" or not folder_list:
+            return None
+        available: list[str] = []
+        for entry in folder_list:
+            if entry is None:
+                continue
+            decoded = entry.decode("utf-8", errors="ignore") if isinstance(entry, bytes) else str(entry)
+            parts = decoded.rsplit('" ', 1)
+            if len(parts) >= 2:
+                folder_name = parts[-1].strip().strip('"')
+                available.append(folder_name)
+
+        for candidate in SENT_FOLDER_NAMES:
+            for avail in available:
+                if avail.lower() == candidate.lower():
+                    return avail
+        for avail in available:
+            if "sent" in avail.lower():
+                return avail
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def scan_inbox(db_session: Session, settings) -> ScanSummary:
+    connection = connect_imap(settings)
+    errors: list[str] = []
+    scanned_messages = 0
+    fetched_messages = 0
+    created_count = 0
+    skipped_count = 0
+    mailbox_id = getattr(settings, "id", "default")
+    mailbox_name = getattr(settings, "name", None)
+    mailbox_address = getattr(settings, "email_address", None)
+    existing_message_ids = _load_existing_message_ids(db_session, mailbox_id)
+
+    try:
+        # Scan INBOX (inbound)
+        s, f, c, sk, errs = _scan_folder(
+            connection, db_session, "INBOX", str(mailbox_id),
+            mailbox_name, mailbox_address, existing_message_ids, direction="inbound",
+        )
+        scanned_messages += s
+        fetched_messages += f
+        created_count += c
+        skipped_count += sk
+        errors.extend(errs)
+
+        # Scan Sent folder (outbound)
+        sent_folder = _find_sent_folder(connection)
+        if sent_folder:
+            s, f, c, sk, errs = _scan_folder(
+                connection, db_session, sent_folder, str(mailbox_id),
+                mailbox_name, mailbox_address, existing_message_ids, direction="sent",
+            )
+            scanned_messages += s
+            fetched_messages += f
+            created_count += c
+            skipped_count += sk
+            errors.extend(errs)
     finally:
         try:
             connection.close()
@@ -139,7 +236,7 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
         connection.logout()
 
     return ScanSummary(
-        mailbox=getattr(settings, "name", None) or getattr(settings, "email_address", None) or "INBOX",
+        mailbox=mailbox_name or mailbox_address or "INBOX",
         scanned_messages=scanned_messages,
         fetched_messages=fetched_messages,
         created_count=created_count,
