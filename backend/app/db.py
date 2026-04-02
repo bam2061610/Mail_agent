@@ -53,10 +53,14 @@ def _ensure_email_columns() -> None:
 
     existing_columns = {column["name"] for column in inspector.get_columns("emails")}
     required_columns = {
+        "folder": "VARCHAR(100) NOT NULL DEFAULT 'inbox'",
+        "direction": "VARCHAR(50) NOT NULL DEFAULT 'inbound'",
+        "status": "VARCHAR(50) NOT NULL DEFAULT 'new'",
         "action_description": "TEXT",
         "key_dates_json": "TEXT",
         "key_amounts_json": "TEXT",
         "ai_analyzed": "BOOLEAN NOT NULL DEFAULT 0",
+        "ai_confidence": "FLOAT",
         "last_reply_sent_at": "DATETIME",
         "spam_source": "VARCHAR(50)",
         "spam_reason": "TEXT",
@@ -68,6 +72,7 @@ def _ensure_email_columns() -> None:
         "mailbox_name": "VARCHAR(255)",
         "mailbox_address": "VARCHAR(255)",
         "has_attachments": "BOOLEAN NOT NULL DEFAULT 0",
+        "requires_reply": "BOOLEAN NOT NULL DEFAULT 0",
         "assigned_to_user_id": "INTEGER",
         "assigned_by_user_id": "INTEGER",
         "assigned_at": "DATETIME",
