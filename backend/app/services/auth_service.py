@@ -20,9 +20,19 @@ PBKDF2_DIGEST = "sha256"
 logger = logging.getLogger(__name__)
 
 
-def hash_password(password: str) -> str:
+class PasswordValidationError(ValueError):
+    """Raised when a password fails strength checks."""
+
+
+def validate_password_strength(password: str) -> None:
     if not password:
-        raise ValueError("Password is required")
+        raise PasswordValidationError("Password is required")
+    if len(password) < 8:
+        raise PasswordValidationError("Password must be at least 8 characters long")
+
+
+def hash_password(password: str) -> str:
+    validate_password_strength(password)
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
         PBKDF2_DIGEST,

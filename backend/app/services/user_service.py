@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.models.user import User
-from app.services.auth_service import hash_password
+from app.services.auth_service import hash_password, validate_password_strength
 
 VALID_ROLES = {"admin", "manager", "operator", "viewer"}
 
@@ -37,6 +37,7 @@ def create_user(
         raise ValueError("Email is required")
     if get_user_by_email(db_session, normalized_email):
         raise ValueError("User with this email already exists")
+    validate_password_strength(password)
 
     user = User(
         email=normalized_email,
@@ -89,6 +90,7 @@ def disable_user(db_session: Session, user: User) -> User:
 
 
 def reset_user_password(db_session: Session, user: User, new_password: str) -> User:
+    validate_password_strength(new_password)
     user.password_hash = hash_password(new_password)
     user.updated_at = datetime.now(timezone.utc)
     db_session.add(user)

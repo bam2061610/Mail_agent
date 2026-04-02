@@ -13,6 +13,7 @@ from app.schemas.system import (
     UserResponse,
     UserUpdateRequest,
 )
+from app.services.auth_service import PasswordValidationError
 from app.services.permission_service import require_permission
 from app.services.user_service import (
     create_user,
@@ -50,6 +51,8 @@ def create_user_route(
             timezone=request.timezone,
             language=request.language,
         )
+    except PasswordValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.add(
@@ -122,7 +125,10 @@ def reset_password_route(
     user = get_user_by_id(db, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
-    reset_user_password(db, user, request.new_password)
+    try:
+        reset_user_password(db, user, request.new_password)
+    except PasswordValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     db.add(
         ActionLog(
             user_id=current_user.id,
