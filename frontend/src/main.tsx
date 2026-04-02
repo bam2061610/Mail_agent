@@ -203,7 +203,7 @@ const initialMailboxForm: MailboxFormState = {
   is_default_outgoing: false,
 };
 
-function App() {
+export function App() {
   const [authToken, setAuthToken] = useState<string>(() => localStorage.getItem("oma_token") || "");
   const [currentUser, setCurrentUser] = useState<UserItem | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -266,10 +266,11 @@ function App() {
       }
       const me = await apiGet<AuthMeResponse>("/api/auth/me");
       setCurrentUser(me.user);
-    } catch {
+    } catch (error) {
       localStorage.removeItem("oma_token");
       setAuthToken("");
       setCurrentUser(null);
+      setErrorMessage(getErrorMessage(error, "Session expired. Please sign in again."));
     } finally {
       setAuthLoading(false);
     }
@@ -279,6 +280,10 @@ function App() {
     event.preventDefault();
     setErrorMessage("");
     setSuccessMessage("");
+    if (!loginForm.email.trim() || !loginForm.password) {
+      setErrorMessage("Email and password are required.");
+      return;
+    }
     setActionLoading("auth-login");
     try {
       const response = await apiPost<AuthLoginResponse>("/api/auth/login", loginForm);
@@ -303,6 +308,8 @@ function App() {
       localStorage.removeItem("oma_token");
       setAuthToken("");
       setCurrentUser(null);
+      setErrorMessage("");
+      setSuccessMessage("");
       setActionLoading(null);
     }
   }
@@ -1049,6 +1056,8 @@ function App() {
               </div>
             </div>
             <div className="panel-body">
+              {errorMessage ? <div className="error-banner" role="alert" style={{ marginBottom: 12 }}>{errorMessage}</div> : null}
+              {successMessage ? <div className="success-banner" style={{ marginBottom: 12 }}>{successMessage}</div> : null}
               <form onSubmit={(event) => void handleLogin(event)}>
                 <div className="settings-grid">
                   <Field label="Email" full>
@@ -1069,7 +1078,7 @@ function App() {
                 </div>
                 <div className="detail-toolbar full" style={{ marginTop: 16 }}>
                   <button className="primary-button" type="submit" disabled={actionLoading === "auth-login"}>
-                    {actionLoading === "auth-login" ? "Signing in..." : "Sign in"}
+                    {actionLoading === "auth-login" ? "Signing in..." : "Sign in / Войти"}
                   </button>
                 </div>
               </form>
@@ -1257,6 +1266,19 @@ function StatCard(props: { label: string; value: number }) { return <div classNa
 function SummaryPoint(props: { title: string; value: string }) { return <div className="summary-point"><strong>{props.title}</strong><span>{props.value}</span></div>; }
 function Field(props: { label: string; children: React.ReactNode; full?: boolean }) { return <div className={`field ${props.full ? "full" : ""}`}><label>{props.label}</label>{props.children}</div>; }
 
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
+
+function normalizeApiBaseUrl(rawValue: string | undefined): string {
+  const value = (rawValue || "").trim();
+  return value ? value.replace(/\/+$/, "") : "";
+}
+
+function buildApiUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (!API_BASE_URL) return url;
+  return url.startsWith("/") ? `${API_BASE_URL}${url}` : `${API_BASE_URL}/${url}`;
+}
+
 function buildApiHeaders(includeJson: boolean): Record<string, string> {
   const headers: Record<string, string> = {};
   if (includeJson) headers["Content-Type"] = "application/json";
@@ -1265,15 +1287,37 @@ function buildApiHeaders(includeJson: boolean): Record<string, string> {
   return headers;
 }
 
-async function apiGet<T>(url: string): Promise<T> { const response = await fetch(url, { headers: buildApiHeaders(false) }); return parseResponse<T>(response); }
-async function apiPost<T = unknown>(url: string, body: unknown): Promise<T> { const response = await fetch(url, { method: "POST", headers: buildApiHeaders(true), body: JSON.stringify(body) }); return parseResponse<T>(response); }
-async function apiPut<T = unknown>(url: string, body: unknown): Promise<T> { const response = await fetch(url, { method: "PUT", headers: buildApiHeaders(true), body: JSON.stringify(body) }); return parseResponse<T>(response); }
-async function apiDelete<T = unknown>(url: string): Promise<T> { const response = await fetch(url, { method: "DELETE", headers: buildApiHeaders(false) }); return parseResponse<T>(response); }
+async function apiGet<T>(url: string): Promise<T> {
+  return requestJson<T>(url, { headers: buildApiHeaders(false) });
+}
+
+async function apiPost<T = unknown>(url: string, body: unknown): Promise<T> {
+  return requestJson<T>(url, { method: "POST", headers: buildApiHeaders(true), body: JSON.stringify(body) });
+}
+
+async function apiPut<T = unknown>(url: string, body: unknown): Promise<T> {
+  return requestJson<T>(url, { method: "PUT", headers: buildApiHeaders(true), body: JSON.stringify(body) });
+}
+
+async function apiDelete<T = unknown>(url: string): Promise<T> {
+  return requestJson<T>(url, { method: "DELETE", headers: buildApiHeaders(false) });
+}
+
 async function apiDownload(url: string, filename: string): Promise<void> {
-  const response = await fetch(url, { headers: buildApiHeaders(false) });
+  const response = await fetch(buildApiUrl(url), { headers: buildApiHeaders(false) });
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
-    try { const data = (await response.json()) as { detail?: string }; if (data?.detail) detail = data.detail; } catch { }
+    try {
+      const data = (await response.json()) as { detail?: string };
+      if (data?.detail) detail = data.detail;
+    } catch {
+      try {
+        const text = await response.text();
+        if (text.trim()) detail = text.slice(0, 180);
+      } catch {
+        // ignore body parse errors
+      }
+    }
     throw new Error(detail);
   }
   const blob = await response.blob();
@@ -1286,10 +1330,33 @@ async function apiDownload(url: string, filename: string): Promise<void> {
   link.remove();
   URL.revokeObjectURL(href);
 }
+
+async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
+  try {
+    const response = await fetch(buildApiUrl(url), init);
+    return parseResponse<T>(response);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(`Network error while reaching API (${buildApiUrl(url)}). Check backend availability, proxy, and CORS.`);
+    }
+    throw error;
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let detail = `${response.status} ${response.statusText}`;
-    try { const data = (await response.json()) as { detail?: string }; if (data?.detail) detail = data.detail; } catch { }
+    try {
+      const data = (await response.json()) as { detail?: string };
+      if (data?.detail) detail = data.detail;
+    } catch {
+      try {
+        const text = await response.text();
+        if (text.trim()) detail = text.slice(0, 180);
+      } catch {
+        // ignore body parse errors
+      }
+    }
     throw new Error(detail);
   }
   return (await response.json()) as T;
@@ -1328,4 +1395,7 @@ function describeRule(rule: AutomationRule): string {
   return `If ${conditions || "matched"} then ${actions || "no-op"}.`;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  ReactDOM.createRoot(rootElement).render(<React.StrictMode><App /></React.StrictMode>);
+}

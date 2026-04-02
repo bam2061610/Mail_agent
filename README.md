@@ -128,6 +128,12 @@ npm run dev
 
 Open `http://localhost:5173`. The Vite dev server proxies `/api/*` to the backend on `http://localhost:8000`.
 
+### Frontend API base URL in built deployments
+
+- The production frontend keeps `/api/*` as the default path (same-origin).
+- The frontend container image now includes nginx proxying from `/api/*` to `backend:8000`, so login and API calls work in Docker Compose without cross-origin setup.
+- If you deploy built static assets behind a different topology, set `VITE_API_BASE_URL` (see `frontend/.env.example`) to the backend origin at build time.
+
 ## Authentication, Roles, and Team Mode
 
 The app now supports practical multi-user team access with role checks enforced on the backend.
