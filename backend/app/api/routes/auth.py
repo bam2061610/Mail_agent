@@ -22,7 +22,7 @@ def login(request: AuthLoginRequest, db: Session = Depends(get_db)) -> AuthLogin
     user = authenticate_user(db, request.email, request.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    token = create_session_token(user)
+    token = create_session_token(db, user)
     db.add(
         ActionLog(
             user_id=user.id,
@@ -47,7 +47,7 @@ def logout(
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1].strip()
     if token:
-        revoke_session_token(token)
+        revoke_session_token(db, token)
     db.add(
         ActionLog(
             user_id=current_user.id,

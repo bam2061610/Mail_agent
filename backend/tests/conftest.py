@@ -13,7 +13,6 @@ from app.db import Base, create_tables, get_db
 from app.models.email import Email
 from app.services import (
     attachment_service,
-    auth_service,
     digest_service,
     diagnostics_service,
     mailbox_service,
@@ -39,7 +38,6 @@ def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     monkeypatch.setattr(mailbox_service, "MAILBOXES_FILE_PATH", data_dir / "mailboxes.json")
     monkeypatch.setattr(preference_profile, "PREFERENCE_PROFILE_PATH", data_dir / "preference_profile.json")
     monkeypatch.setattr(digest_service, "STATE_FILE_PATH", data_dir / "digest_state.json")
-    monkeypatch.setattr(auth_service, "TOKENS_FILE_PATH", data_dir / "auth_tokens.json")
     monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", attachments_dir)
 
     monkeypatch.setattr(diagnostics_service, "BACKEND_DIR", tmp_path)

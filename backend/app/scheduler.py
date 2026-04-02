@@ -17,11 +17,13 @@ from app.services.diagnostics_service import (
     mark_scheduler_started,
     mark_scheduler_stopped,
 )
+from app.services.auth_service import cleanup_expired_session_tokens
 from app.services.imap_scanner import scan_all_mailboxes
 
 logger = logging.getLogger(__name__)
 
 SCHEDULER_JOB_ID = "scan_and_analyze"
+SESSION_TOKEN_CLEANUP_JOB_ID = "session_token_cleanup"
 
 
 @dataclass(slots=True)
@@ -138,6 +140,17 @@ def run_scan_and_analyze() -> ScheduledRunResult:
     return result
 
 
+def run_session_token_cleanup() -> int:
+    db_session = SessionLocal()
+    try:
+        removed = cleanup_expired_session_tokens(db_session)
+        if removed:
+            logger.info("Session token cleanup removed %s expired token(s)", removed)
+        return removed
+    finally:
+        db_session.close()
+
+
 def create_scheduler(config) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(
         job_defaults={
@@ -152,6 +165,13 @@ def create_scheduler(config) -> BackgroundScheduler:
         trigger="interval",
         minutes=max(1, int(config.scan_interval_minutes)),
         id=SCHEDULER_JOB_ID,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_session_token_cleanup,
+        trigger="interval",
+        hours=1,
+        id=SESSION_TOKEN_CLEANUP_JOB_ID,
         replace_existing=True,
     )
     return scheduler

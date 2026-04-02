@@ -16,7 +16,6 @@ BACKUP_CONFIG_FILES = [
     "mailboxes.json",
     "preferences.profile.json",
     "digest_state.json",
-    "auth_tokens.json",
 ]
 
 

@@ -37,7 +37,7 @@ def create_tables() -> None:
     if sqlite_path is not None:
         sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
-    from app.models import attachment, action_log, contact, email, task, user  # noqa: F401
+    from app.models import attachment, action_log, contact, email, session_token, task, user  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _ensure_email_columns()

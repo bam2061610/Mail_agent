@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import hmac
-import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -9,11 +8,11 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.config import DATA_DIR, get_effective_settings
+from app.config import get_effective_settings
 from app.db import get_db
+from app.models.session_token import SessionToken
 from app.models.user import User
 
-TOKENS_FILE_PATH = DATA_DIR / "auth_tokens.json"
 TOKEN_TTL_HOURS = 24
 PBKDF2_ITERATIONS = 210_000
 PBKDF2_DIGEST = "sha256"
@@ -63,23 +62,21 @@ def verify_password(password: str, password_hash: str) -> bool:
     return hmac.compare_digest(candidate, expected)
 
 
-def create_session_token(user: User) -> str:
+def create_session_token(db_session: Session, user: User) -> str:
     token = secrets.token_urlsafe(48)
     expires_at = datetime.now(timezone.utc) + timedelta(hours=TOKEN_TTL_HOURS)
-    payload = _load_tokens()
-    payload[token] = {
-        "user_id": user.id,
-        "expires_at": expires_at.isoformat(),
-    }
-    _save_tokens(payload)
+    db_session.add(
+        SessionToken(
+            token=token,
+            user_id=user.id,
+            expires_at=expires_at,
+        )
+    )
     return token
 
 
-def revoke_session_token(token: str) -> None:
-    payload = _load_tokens()
-    if token in payload:
-        payload.pop(token, None)
-        _save_tokens(payload)
+def revoke_session_token(db_session: Session, token: str) -> None:
+    db_session.query(SessionToken).filter(SessionToken.token == token).delete(synchronize_session=False)
 
 
 def authenticate_user(db_session: Session, email: str, password: str) -> User | None:
@@ -97,22 +94,31 @@ def authenticate_user(db_session: Session, email: str, password: str) -> User | 
 
 
 def get_user_by_token(db_session: Session, token: str) -> User | None:
-    payload = _load_tokens()
-    record = payload.get(token)
-    if not record:
+    record = db_session.query(SessionToken).filter(SessionToken.token == token).first()
+    if record is None:
         return None
-    expires_at = _parse_dt(record.get("expires_at"))
+    expires_at = _parse_dt(record.expires_at)
     if expires_at is None or expires_at < datetime.now(timezone.utc):
-        payload.pop(token, None)
-        _save_tokens(payload)
+        db_session.delete(record)
+        db_session.commit()
         return None
-    user_id = record.get("user_id")
-    if user_id is None:
-        return None
-    user = db_session.query(User).filter(User.id == int(user_id), User.is_active.is_(True)).first()
+    user = db_session.query(User).filter(User.id == int(record.user_id), User.is_active.is_(True)).first()
     if user is None:
+        db_session.delete(record)
+        db_session.commit()
         return None
     return user
+
+
+def cleanup_expired_session_tokens(db_session: Session, *, now: datetime | None = None) -> int:
+    current_time = now or datetime.now(timezone.utc)
+    removed = (
+        db_session.query(SessionToken)
+        .filter(SessionToken.expires_at < current_time)
+        .delete(synchronize_session=False)
+    )
+    db_session.commit()
+    return int(removed or 0)
 
 
 def get_current_user(
@@ -162,30 +168,17 @@ def _maybe_dev_single_user(db_session: Session) -> User | None:
     return None
 
 
-def _load_tokens() -> dict:
-    if not TOKENS_FILE_PATH.exists():
-        return {}
-    try:
-        payload = json.loads(TOKENS_FILE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    return payload
-
-
-def _save_tokens(payload: dict) -> None:
-    TOKENS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TOKENS_FILE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _parse_dt(value: str | None) -> datetime | None:
+def _parse_dt(value: datetime | str | None) -> datetime | None:
     if not value:
         return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
+    parsed: datetime
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
