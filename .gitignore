@@ -1,5 +1,13 @@
 __pycache__/
 *.pyc
+.tools/
+.pytest_cache/
+.cache/
+tmp/
+temp/
+coverage/
+.vite/
+frontend/dist/
 .env
 .venv/
 data/
