@@ -105,10 +105,6 @@ def test_happy_path_core_flow(client, db_session, admin_auth_headers, monkeypatc
     assert send.status_code == 200
     assert send.json()["status"] == "replied"
 
-    waiting = client.post(f"/api/emails/{email_id}/waiting/start", headers=admin_auth_headers, json={})
-    assert waiting.status_code == 200
-    assert waiting.json()["waiting_state"] in {"waiting_reply", "overdue_reply"}
-
     actions = db_session.query(ActionLog).filter(ActionLog.email_id == email_id).all()
     action_types = {item.action_type for item in actions}
     assert "email_sent" in action_types

@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -11,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.action_log import ActionLog
 from app.models.email import Email
+from app.services.deepseek_client import call_deepseek_chat
 from app.services.mailbox_service import SENT_DIRECTION_VALUES
 from app.services.preference_profile import get_preference_profile
 
@@ -253,41 +253,12 @@ def _load_thread_history(db_session: Session, email_record: Email) -> list[Email
 
 
 def _call_model(system_prompt: str, user_payload: str, config) -> str:
-    try:
-        from openai import OpenAI
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("openai package is required for sent review") from exc
-
-    if not getattr(config, "openai_api_key", None):
-        raise ValueError("OPENAI_API_KEY is not configured")
-
-    client = OpenAI(
-        api_key=config.openai_api_key,
-        base_url=getattr(config, "deepseek_base_url", "https://api.deepseek.com"),
-        timeout=getattr(config, "ai_timeout_seconds", 60),
+    result = call_deepseek_chat(
+        system_prompt=system_prompt,
+        user_payload=user_payload,
+        config=config,
     )
-
-    retries = max(1, int(getattr(config, "ai_max_retries", 3) or 3))
-    last_error: Exception | None = None
-    for attempt in range(1, retries + 1):
-        try:
-            response = client.chat.completions.create(
-                model=getattr(config, "deepseek_model", "deepseek-chat"),
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_payload},
-                ],
-            )
-            content = response.choices[0].message.content
-            if not content:
-                raise ValueError("Empty model response")
-            return content
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-            if attempt < retries:
-                time.sleep(min(2 * attempt, 5))
-    raise RuntimeError(f"sent-review model call failed: {last_error}")
+    return result.content
 
 
 def _extract_json(raw: str) -> dict[str, Any]:

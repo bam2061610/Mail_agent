@@ -1,5 +1,5 @@
 from app.models.email import Email
-from app.services.mailbox_service import create_mailbox, get_enabled_mailbox_configs, get_outgoing_mailbox_for_email
+from app.services.mailbox_service import create_mailbox, get_enabled_mailbox_configs, get_mailbox, get_outgoing_mailbox_for_email, update_mailbox
 from app.services.imap_scanner import scan_inbox
 
 
@@ -27,6 +27,13 @@ def test_multi_mailbox_create_and_select_outgoing(db_session):
     )
     enabled = get_enabled_mailbox_configs()
     assert len(enabled) >= 2
+
+    updated = update_mailbox(first["id"], {"name": "Primary Updated", "smtp_use_tls": False})
+    assert updated is not None
+    assert updated["name"] == "Primary Updated"
+    persisted = get_mailbox(first["id"])
+    assert persisted is not None
+    assert persisted["name"] == "Primary Updated"
 
     email = Email(
         message_id="<mb-1@test>",

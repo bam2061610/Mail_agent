@@ -52,34 +52,6 @@ export async function apiPost<T = unknown>(url: string, body: unknown): Promise<
   });
 }
 
-export async function apiPut<T = unknown>(url: string, body: unknown): Promise<T> {
-  return requestJson<T>(url, {
-    method: "PUT",
-    headers: buildApiHeaders(true),
-    body: JSON.stringify(body),
-  });
-}
-
-export async function apiDelete<T = unknown>(url: string): Promise<T> {
-  return requestJson<T>(url, { method: "DELETE", headers: buildApiHeaders(false) });
-}
-
-export async function apiDownload(url: string, filename: string): Promise<void> {
-  const response = await fetch(buildApiUrl(url), { headers: buildApiHeaders(false) });
-  if (!response.ok) {
-    throw new Error(await extractErrorDetail(response));
-  }
-  const blob = await response.blob();
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(href);
-}
-
 export async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
   try {
     const response = await fetch(buildApiUrl(url), init);
@@ -119,15 +91,20 @@ export type ReplyRequestPayload = {
   save_as_sent_record?: boolean;
 };
 
-export function buildReplyPayload(body: string, recipientEmail: string | null | undefined, subject?: string | null): ReplyRequestPayload {
-  const trimmedRecipient = (recipientEmail || "").trim();
-  const payload: ReplyRequestPayload = {
-    body,
-    save_as_sent_record: true,
+export function buildReplyPayload(payload: ReplyRequestPayload): ReplyRequestPayload {
+  const cleanRecipients = (values?: string[]) =>
+    (values || [])
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+  return {
+    body: payload.body,
+    to: cleanRecipients(payload.to),
+    cc: cleanRecipients(payload.cc),
+    bcc: cleanRecipients(payload.bcc),
+    subject: payload.subject?.trim() || undefined,
+    save_as_sent_record: payload.save_as_sent_record ?? true,
   };
-  if (trimmedRecipient) payload.to = [trimmedRecipient];
-  if ((subject || "").trim()) payload.subject = String(subject).trim();
-  return payload;
 }
 
 function shouldTryTokenRefresh(url: string): boolean {

@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Orhun Mail Agent",
-    "tagline": "Action dashboard for intake, drafting, automation, and review control.",
+    "tagline": "A calm smart inbox for readable threads and fast replies.",
     "workspace": "Workspace",
     "logout": "Logout",
     "signingOut": "Signing out...",
@@ -12,8 +12,8 @@
   },
   "auth": {
     "checking": "Checking authentication...",
-    "teamLogin": "Team login",
-    "signinHint": "Sign in to access Orhun Mail Agent workspace.",
+    "teamLogin": "Mail login",
+    "signinHint": "Sign in to access your inbox.",
     "email": "Email",
     "password": "Password",
     "signingIn": "Signing in...",
@@ -21,6 +21,7 @@
     "defaultCreds": "Default credentials on first run: admin@orhun.local / admin123"
   },
   "nav": {
+    "inbox": "Inbox",
     "focus": "Focus",
     "active": "Active Queue",
     "sent": "Sent",
@@ -112,7 +113,28 @@
     "draftHelpful": "Draft helpful",
     "draftNeedsWork": "Draft needs work",
     "summaryHeading": "Summary",
-    "originalMessage": "Original message"
+    "originalMessage": "Original message",
+    "replyTitle": "Reply preview",
+    "readTitle": "Read message",
+    "replyNow": "Reply",
+    "replyWithAi": "Reply with AI",
+    "replyLater": "Reply later",
+    "closeModal": "Close",
+    "backToRead": "Back to read",
+    "to": "To",
+    "cc": "CC",
+    "bcc": "BCC",
+    "subject": "Subject",
+    "customPrompt": "AI prompt",
+    "customPromptHint": "Optional instructions for draft generation.",
+    "customPromptPlaceholder": "Write a short instruction for the AI draft...",
+    "replyDraftHint": "Edit the draft before sending.",
+    "signature": "Signature",
+    "signatureHint": "This text will be appended before the quoted message.",
+    "signaturePlaceholder": "Best regards,\nYour Name",
+    "includeOriginal": "Included in send",
+    "replyHint": "The reply body shown here can be sent as-is or edited.",
+    "replyWithAiTitle": "Open a reply draft with AI assistance"
   },
   "waitingPanel": {
     "title": "Waiting queue",

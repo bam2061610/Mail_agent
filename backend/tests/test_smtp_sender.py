@@ -42,6 +42,12 @@ def _config():
 
 def test_send_reply_uses_smtp_transport(monkeypatch):
     monkeypatch.setattr(smtp_sender.smtplib, "SMTP", DummySMTP)
+    sent_copy_calls = []
+    monkeypatch.setattr(
+        smtp_sender,
+        "append_sent_copy_to_imap",
+        lambda config, message, folder_kind="sent", save_copy_as_seen=True: sent_copy_calls.append((config, message["Subject"], folder_kind)),
+    )
     result = smtp_sender.send_reply(
         to=["client@example.com"],
         subject="Re: Test",
@@ -52,3 +58,22 @@ def test_send_reply_uses_smtp_transport(monkeypatch):
     assert result.status == "sent"
     assert DummySMTP.sent is True
     assert "client@example.com" in result.recipients
+    assert sent_copy_calls and sent_copy_calls[0][2] == "sent"
+
+
+def test_send_email_appends_sent_copy(monkeypatch):
+    monkeypatch.setattr(smtp_sender.smtplib, "SMTP", DummySMTP)
+    sent_copy_calls = []
+    monkeypatch.setattr(
+        smtp_sender,
+        "append_sent_copy_to_imap",
+        lambda config, message, folder_kind="sent", save_copy_as_seen=True: sent_copy_calls.append((config, message["Subject"], folder_kind)),
+    )
+    result = smtp_sender.send_email(
+        to=["client@example.com"],
+        subject="Status update",
+        body="Hello",
+        config=_config(),
+    )
+    assert result.status == "sent"
+    assert sent_copy_calls and sent_copy_calls[0][1] == "Status update"

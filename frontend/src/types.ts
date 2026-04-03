@@ -1,4 +1,5 @@
 export type ViewKey = "focus" | "active" | "sent" | "waiting" | "spam" | "reports" | "settings";
+export type MailView = "inbox" | "sent" | "spam" | "settings";
 export type UserRole = "admin" | "manager" | "operator" | "viewer";
 
 export type EmailItem = {
@@ -24,6 +25,9 @@ export type EmailItem = {
   spam_action_actor?: string | null;
   ai_summary?: string | null;
   body_text?: string | null;
+  body_html?: string | null;
+  folder?: string | null;
+  thread_id?: string | null;
   ai_draft_reply?: string | null;
   action_description?: string | null;
   detected_source_language?: string | null;
@@ -99,6 +103,7 @@ export type SettingsResponse = {
   catchup_absence_hours: number;
   sent_review_batch_limit: number;
   cors_origins: string[];
+  signature?: string | null;
   has_imap_password: boolean;
   has_smtp_password: boolean;
   has_openai_api_key: boolean;
@@ -225,6 +230,12 @@ export type MailboxFormState = {
 
 export type LoginFormState = { email: string; password: string };
 export type UserFormState = { email: string; full_name: string; password: string; role: UserRole };
+export type DraftGenerationResponse = {
+  draft_reply: string;
+  subject?: string | null;
+  target_language: string;
+  template_id?: string | null;
+};
 
 export const initialSettingsForm = {
   app_name: "",

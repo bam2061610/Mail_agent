@@ -10,10 +10,8 @@ from app.services.diagnostics_service import backend_paths
 
 BACKUP_KEEP_DEFAULT = 10
 BACKUP_CONFIG_FILES = [
-    "settings.local.json",
     "rules.json",
     "templates.json",
-    "mailboxes.json",
     "preferences.profile.json",
     "digest_state.json",
 ]

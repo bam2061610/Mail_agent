@@ -16,9 +16,7 @@ from app.services.permission_service import require_permission
 from app.services.report_service import (
     build_report_email_body,
     build_activity_report,
-    build_followup_report,
     build_sent_review_report,
-    build_team_activity_report,
     normalize_recipient_addresses,
     parse_report_filters,
 )
@@ -54,32 +52,6 @@ def report_activity(
     return ReportResponse(**payload)
 
 
-@router.get("/followups", response_model=ReportResponse)
-def report_followups(
-    date_from: str | None = Query(default=None),
-    date_to: str | None = Query(default=None),
-    mailbox_id: str | None = Query(default=None),
-    user_id: int | None = Query(default=None),
-    status: str | None = Query(default=None),
-    priority: str | None = Query(default=None),
-    category: str | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("read")),
-) -> ReportResponse:
-    filters = parse_report_filters(
-        date_from=date_from,
-        date_to=date_to,
-        mailbox_id=mailbox_id,
-        user_id=user_id,
-        status=status,
-        priority=priority,
-        category=category,
-    )
-    payload = build_followup_report(db, filters)
-    _log_report_action(db, current_user, "report_generated", {"report_type": "followups", "filters": payload.get("filters")})
-    return ReportResponse(**payload)
-
-
 @router.get("/sent-review", response_model=ReportResponse)
 def report_sent_review(
     date_from: str | None = Query(default=None),
@@ -103,22 +75,6 @@ def report_sent_review(
     )
     payload = build_sent_review_report(db, filters)
     _log_report_action(db, current_user, "report_generated", {"report_type": "sent_review", "filters": payload.get("filters")})
-    return ReportResponse(**payload)
-
-
-@router.get("/team-activity", response_model=ReportResponse)
-def report_team_activity(
-    date_from: str | None = Query(default=None),
-    date_to: str | None = Query(default=None),
-    user_id: int | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("read")),
-) -> ReportResponse:
-    if current_user.role not in {"admin", "manager"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions for team activity report")
-    filters = parse_report_filters(date_from=date_from, date_to=date_to, user_id=user_id)
-    payload = build_team_activity_report(db, filters)
-    _log_report_action(db, current_user, "report_generated", {"report_type": "team_activity", "filters": payload.get("filters")})
     return ReportResponse(**payload)
 
 
@@ -147,38 +103,6 @@ def export_activity(
     payload = build_activity_report(db, filters)
     artifact = export_report(payload, "activity_report", format)
     _log_report_action(db, current_user, f"report_exported_{format}", {"report_type": "activity", "filters": payload.get("filters")})
-    return Response(
-        content=artifact.content,
-        media_type=artifact.media_type,
-        headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
-    )
-
-
-@router.get("/followups/export")
-def export_followups(
-    format: str = Query(default="csv", pattern="^(csv|pdf)$"),
-    date_from: str | None = Query(default=None),
-    date_to: str | None = Query(default=None),
-    mailbox_id: str | None = Query(default=None),
-    user_id: int | None = Query(default=None),
-    status: str | None = Query(default=None),
-    priority: str | None = Query(default=None),
-    category: str | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("read")),
-) -> Response:
-    filters = parse_report_filters(
-        date_from=date_from,
-        date_to=date_to,
-        mailbox_id=mailbox_id,
-        user_id=user_id,
-        status=status,
-        priority=priority,
-        category=category,
-    )
-    payload = build_followup_report(db, filters)
-    artifact = export_report(payload, "followups_report", format)
-    _log_report_action(db, current_user, f"report_exported_{format}", {"report_type": "followups", "filters": payload.get("filters")})
     return Response(
         content=artifact.content,
         media_type=artifact.media_type,
@@ -218,28 +142,6 @@ def export_sent_review(
     )
 
 
-@router.get("/team-activity/export")
-def export_team_activity(
-    format: str = Query(default="csv", pattern="^(csv|pdf)$"),
-    date_from: str | None = Query(default=None),
-    date_to: str | None = Query(default=None),
-    user_id: int | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("read")),
-) -> Response:
-    if current_user.role not in {"admin", "manager"}:
-        raise HTTPException(status_code=403, detail="Insufficient permissions for team activity report")
-    filters = parse_report_filters(date_from=date_from, date_to=date_to, user_id=user_id)
-    payload = build_team_activity_report(db, filters)
-    artifact = export_report(payload, "team_activity_report", format)
-    _log_report_action(db, current_user, f"report_exported_{format}", {"report_type": "team_activity", "filters": payload.get("filters")})
-    return Response(
-        content=artifact.content,
-        media_type=artifact.media_type,
-        headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'},
-    )
-
-
 @router.post("/send", response_model=ReportSendResponse)
 def send_report_email(
     request: ReportSendRequest,
@@ -258,14 +160,8 @@ def send_report_email(
     report_type = request.report_type.strip().lower()
     if report_type == "activity":
         payload = build_activity_report(db, filters)
-    elif report_type == "followups":
-        payload = build_followup_report(db, filters)
     elif report_type == "sent-review":
         payload = build_sent_review_report(db, filters)
-    elif report_type == "team-activity":
-        if current_user.role not in {"admin", "manager"}:
-            raise HTTPException(status_code=403, detail="Insufficient permissions for team activity report")
-        payload = build_team_activity_report(db, filters)
     else:
         raise HTTPException(status_code=400, detail="Unsupported report_type")
 

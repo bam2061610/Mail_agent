@@ -1,4 +1,5 @@
-import React from "react";
+import type { FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { Field } from "./common/Field";
 import type { LoginFormState } from "../types";
 
@@ -8,47 +9,44 @@ type LoginScreenProps = {
   errorMessage?: string;
   successMessage?: string;
   onChange: (next: LoginFormState) => void;
-  onSubmit: (event: React.FormEvent) => void;
+  onSubmit: (event: FormEvent) => void;
 };
 
 export function LoginScreen(props: LoginScreenProps) {
+  const { t } = useTranslation();
+
   return (
-    <section className="panel" style={{ maxWidth: 480, margin: "48px auto" }}>
-      <div className="panel-header">
-        <div>
-          <h3 className="panel-title">Team login</h3>
-          <p className="panel-subtitle">Sign in to access Orhun Mail Agent workspace.</p>
+    <section className="auth-shell">
+      <div className="auth-card">
+        <div className="auth-mark" />
+        <div className="auth-copy">
+          <h1>{t("auth.teamLogin")}</h1>
+          <p>{t("auth.signinHint")}</p>
         </div>
-      </div>
-      <div className="panel-body">
-        {props.errorMessage ? <div className="error-banner" role="alert" style={{ marginBottom: 12 }}>{props.errorMessage}</div> : null}
-        {props.successMessage ? <div className="success-banner" style={{ marginBottom: 12 }}>{props.successMessage}</div> : null}
-        <form onSubmit={props.onSubmit}>
-          <div className="settings-grid">
-            <Field label="Email" full>
-              <input
-                value={props.loginForm.email}
-                onChange={(event) => props.onChange({ ...props.loginForm, email: event.target.value })}
-                autoComplete="username"
-              />
-            </Field>
-            <Field label="Password" full>
-              <input
-                type="password"
-                value={props.loginForm.password}
-                onChange={(event) => props.onChange({ ...props.loginForm, password: event.target.value })}
-                autoComplete="current-password"
-              />
-            </Field>
-          </div>
-          <div className="detail-toolbar full" style={{ marginTop: 16 }}>
-            <button className="primary-button" type="submit" disabled={props.actionLoading === "auth-login"}>
-              {props.actionLoading === "auth-login" ? "Signing in..." : "Sign in / Войти"}
-            </button>
-          </div>
-          <p className="panel-subtitle" style={{ marginTop: 8, fontSize: 12 }}>
-            Default credentials on first run: admin@orhun.local / admin123
-          </p>
+        {props.errorMessage ? <div className="banner banner-error" role="alert">{props.errorMessage}</div> : null}
+        {props.successMessage ? <div className="banner banner-success">{props.successMessage}</div> : null}
+        <form className="auth-form" onSubmit={props.onSubmit}>
+          <Field label={t("auth.email")} full>
+            <input
+              value={props.loginForm.email}
+              onChange={(event) => props.onChange({ ...props.loginForm, email: event.target.value })}
+              autoComplete="username"
+              placeholder="admin@orhun.local"
+            />
+          </Field>
+          <Field label={t("auth.password")} full>
+            <input
+              type="password"
+              value={props.loginForm.password}
+              onChange={(event) => props.onChange({ ...props.loginForm, password: event.target.value })}
+              autoComplete="current-password"
+              placeholder="••••••••"
+            />
+          </Field>
+          <button className="button button-primary" type="submit" disabled={props.actionLoading === "auth-login"}>
+            {props.actionLoading === "auth-login" ? t("auth.signingIn") : t("auth.signin")}
+          </button>
+          <p className="helper-text">{t("auth.defaultCreds")}</p>
         </form>
       </div>
     </section>

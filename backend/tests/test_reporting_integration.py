@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.models.email import Email
-from app.models.task import Task
 
 
 def test_activity_report_and_exports(client, db_session, admin_auth_headers):
@@ -38,18 +37,6 @@ def test_activity_report_and_exports(client, db_session, admin_auth_headers):
     db_session.add_all([inbound, sent])
     db_session.commit()
 
-    db_session.add(
-        Task(
-            email_id=inbound.id,
-            thread_id=inbound.thread_id,
-            task_type="followup",
-            title="Follow-up test",
-            state="waiting_reply",
-            followup_started_at=now - timedelta(days=1),
-        )
-    )
-    db_session.commit()
-
     report = client.get("/api/reports/activity", headers=admin_auth_headers)
     assert report.status_code == 200
     payload = report.json()
@@ -63,15 +50,15 @@ def test_activity_report_and_exports(client, db_session, admin_auth_headers):
     assert "text/csv" in csv_export.headers.get("content-type", "")
     assert "attachment;" in csv_export.headers.get("content-disposition", "")
 
-    pdf_export = client.get("/api/reports/followups/export?format=pdf", headers=admin_auth_headers)
+    pdf_export = client.get("/api/reports/sent-review/export?format=pdf", headers=admin_auth_headers)
     assert pdf_export.status_code == 200
     assert "application/pdf" in pdf_export.headers.get("content-type", "")
     assert "attachment;" in pdf_export.headers.get("content-disposition", "")
 
 
-def test_team_activity_report_is_restricted_for_operator(client, operator_auth_headers):
+def test_obsolete_team_report_routes_are_gone(client, operator_auth_headers):
     response = client.get("/api/reports/team-activity", headers=operator_auth_headers)
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_send_report_email_normalizes_recipients(client, admin_auth_headers, monkeypatch):

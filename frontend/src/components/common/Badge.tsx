@@ -1,10 +1,10 @@
-import React from "react";
+import type { ReactNode } from "react";
 
 type BadgeProps = {
-  className?: string;
-  children: React.ReactNode;
+  children: ReactNode;
+  tone?: "neutral" | "accent" | "success" | "warning" | "danger";
 };
 
-export function Badge(props: BadgeProps) {
-  return <span className={`badge ${props.className || ""}`.trim()}>{props.children}</span>;
+export function Badge({ children, tone = "neutral" }: BadgeProps) {
+  return <span className={`badge badge-${tone}`}>{children}</span>;
 }

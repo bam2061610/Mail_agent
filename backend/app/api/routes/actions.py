@@ -1,5 +1,3 @@
-from dataclasses import asdict
-
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,7 +9,7 @@ from app.db import get_db
 from app.models.action_log import ActionLog
 from app.models.email import Email
 from app.models.user import User
-from app.schemas.email import EmailListItem, WaitingThreadItem
+from app.schemas.email import EmailListItem
 from app.schemas.system import (
     AutomationRule,
     AutomationRuleCreateRequest,
@@ -28,7 +26,6 @@ from app.schemas.system import (
 from app.services.ai_analyzer import analyze_pending
 from app.services.attachment_service import build_attachment_download_payload, get_attachment
 from app.services.diagnostics_service import mark_analyze_result, mark_scan_result
-from app.services.followup_tracker import get_waiting_threads
 from app.services.imap_scanner import scan_all_mailboxes
 from app.services.preference_profile import get_preference_profile, rebuild_preference_profile
 from app.services.rule_engine import create_rule, delete_rule, list_rules, reorder_rules, update_rule
@@ -109,14 +106,6 @@ def manual_scan(
         errors=errors,
         details=details,
     )
-
-
-@router.get("/api/followups", response_model=list[WaitingThreadItem])
-def list_followups(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("read")),
-) -> list[WaitingThreadItem]:
-    return [WaitingThreadItem(**asdict(item)) for item in get_waiting_threads(db)]
 
 
 @router.get("/api/preferences", response_model=PreferenceProfileResponse)

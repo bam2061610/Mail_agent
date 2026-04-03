@@ -1,38 +1,54 @@
-import React from "react";
 import { useTranslation } from "react-i18next";
-import type { ViewKey } from "../types";
-import { NavButton } from "../AppLegacy";
+import type { MailView } from "../types";
+import { Badge } from "./common/Badge";
 
 type SidebarProps = {
-  view: ViewKey;
-  activeQueueCount: number;
-  sentCount: number;
-  waitingCount: number;
-  spamCount: number;
-  rulesCount: number;
-  onViewChange: (view: ViewKey) => void;
+  view: MailView;
+  open: boolean;
+  onClose: () => void;
+  onViewChange: (view: MailView) => void;
 };
 
-export function Sidebar(props: SidebarProps) {
+const ITEMS: Array<{ key: MailView; labelKey: string; short: string }> = [
+  { key: "inbox", labelKey: "nav.inbox", short: "Inbox" },
+  { key: "sent", labelKey: "nav.sent", short: "Sent" },
+  { key: "spam", labelKey: "nav.spam", short: "Spam" },
+  { key: "settings", labelKey: "nav.settings", short: "Settings" },
+];
+
+export function Sidebar({ view, open, onClose, onViewChange }: SidebarProps) {
   const { t } = useTranslation();
+
   return (
-    <aside className="sidebar">
-      <div className="brand">
-        <h1>{t("app.name")}</h1>
-        <p>{t("app.tagline")}</p>
-      </div>
-      <div className="nav-section">
-        <div className="nav-label">{t("app.workspace")}</div>
-        <div className="nav-list">
-          <NavButton label={t("nav.focus")} active={props.view === "focus"} onClick={() => props.onViewChange("focus")} />
-          <NavButton label={t("nav.active")} active={props.view === "active"} badge={props.activeQueueCount} onClick={() => props.onViewChange("active")} />
-          <NavButton label={t("nav.sent")} active={props.view === "sent"} badge={props.sentCount} onClick={() => props.onViewChange("sent")} />
-          <NavButton label={t("nav.waiting")} active={props.view === "waiting"} badge={props.waitingCount} onClick={() => props.onViewChange("waiting")} />
-          <NavButton label={t("nav.spam")} active={props.view === "spam"} badge={props.spamCount} onClick={() => props.onViewChange("spam")} />
-          <NavButton label={t("nav.reports")} active={props.view === "reports"} onClick={() => props.onViewChange("reports")} />
-          <NavButton label={t("nav.settings")} active={props.view === "settings"} badge={props.rulesCount} onClick={() => props.onViewChange("settings")} />
+    <>
+      <div className={`sidebar-backdrop${open ? " is-visible" : ""}`} onClick={onClose} aria-hidden="true" />
+      <aside className={`sidebar${open ? " is-open" : ""}`}>
+        <div className="sidebar-brand">
+          <Badge tone="accent">Smart Inbox</Badge>
+          <div>
+            <h2>{t("app.name")}</h2>
+            <p>{t("app.tagline")}</p>
+          </div>
         </div>
-      </div>
-    </aside>
+        <nav className="sidebar-nav" aria-label={t("app.workspace")}>
+          {ITEMS.map((item) => (
+            <button
+              key={item.key}
+              className={`sidebar-link${view === item.key ? " is-active" : ""}`}
+              type="button"
+              onClick={() => {
+                onViewChange(item.key);
+                onClose();
+              }}
+            >
+              <span>{t(item.labelKey, { defaultValue: item.short })}</span>
+              <span className="sidebar-link-short" aria-hidden="true">
+                {item.short}
+              </span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+    </>
   );
 }

@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.models.email import Email
 from app.models.action_log import ActionLog
+from app.db import open_account_session
 from app.services.attachment_service import ParsedAttachment, extract_attachments, save_attachments
-from app.services.followup_tracker import close_waiting
 from app.services.language_service import update_email_languages
 from app.services.mailbox_service import get_enabled_mailbox_configs
 from app.services.diagnostics_service import mark_mailbox_scan_result
@@ -93,6 +93,17 @@ def _imap_date_criterion(days_back: int = MAX_INITIAL_SCAN_DAYS) -> str:
     return f'SINCE {since_date.strftime("%d-%b-%Y")}'
 
 
+def _is_older_than_cutoff(date_received: datetime | None, cutoff: datetime) -> bool:
+    if date_received is None:
+        return False
+    normalized = date_received
+    if normalized.tzinfo is None:
+        normalized = normalized.replace(tzinfo=timezone.utc)
+    else:
+        normalized = normalized.astimezone(timezone.utc)
+    return normalized < cutoff
+
+
 def _scan_folder(
     connection: imaplib.IMAP4_SSL,
     db_session: Session,
@@ -109,6 +120,7 @@ def _scan_folder(
     fetched_messages = 0
     created_count = 0
     skipped_count = 0
+    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_INITIAL_SCAN_DAYS)
 
     try:
         status, _ = connection.select(folder, readonly=True)
@@ -135,6 +147,9 @@ def _scan_folder(
             raw_message = _fetch_full_message(connection, uid)
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
+            if _is_older_than_cutoff(parsed_message.date_received, retention_cutoff):
+                skipped_count += 1
+                continue
             if direction == "sent":
                 parsed_message.direction = "sent"
                 parsed_message.folder = folder.lower()
@@ -261,8 +276,9 @@ def scan_all_mailboxes(db_session: Session, settings) -> MultiMailboxScanSummary
             )
         )
         db_session.commit()
+        account_db = open_account_session(str(mailbox.id))
         try:
-            result = scan_inbox(db_session, mailbox)
+            result = scan_inbox(account_db, mailbox)
             mailbox_results.append(result)
             total_created += result.created_count
             total_skipped += result.skipped_count
@@ -313,6 +329,8 @@ def scan_all_mailboxes(db_session: Session, settings) -> MultiMailboxScanSummary
                     errors=[error_text],
                 )
             )
+        finally:
+            account_db.close()
 
     return MultiMailboxScanSummary(
         total_created_count=total_created,
@@ -479,13 +497,6 @@ def save_parsed_email(
     if saved_attachments:
         email_record.has_attachments = True
         db_session.add(email_record)
-    if parsed_message.direction == "inbound":
-        close_waiting(
-            db_session=db_session,
-            thread_id=resolved_thread_id,
-            reason="reply_received",
-            actor="imap",
-        )
     db_session.commit()
     db_session.refresh(email_record)
     return SaveEmailResult(

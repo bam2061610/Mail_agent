@@ -1,12 +1,12 @@
 import logging
 import os
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.config import get_effective_settings
-from app.db import SessionLocal
+from app.db import SessionLocal, list_account_database_ids, open_account_session
 from app.models.action_log import ActionLog
 from app.services.ai_analyzer import analyze_pending
 from app.services.diagnostics_service import (
@@ -19,19 +19,24 @@ from app.services.diagnostics_service import (
 )
 from app.services.auth_service import cleanup_expired_session_tokens
 from app.services.imap_scanner import scan_all_mailboxes
+from app.services.retention_service import cleanup_email_retention
+from app.services.mailbox_service import get_enabled_mailbox_configs
 
 logger = logging.getLogger(__name__)
 
 SCHEDULER_JOB_ID = "scan_and_analyze"
 SESSION_TOKEN_CLEANUP_JOB_ID = "session_token_cleanup"
+RETENTION_CLEANUP_JOB_ID = "email_retention_cleanup"
 
 
 @dataclass(slots=True)
 class ScheduledRunResult:
     imported_count: int
     analyzed_count: int
-    errors_count: int
-    errors: list[str]
+    errors_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 def run_scan_and_analyze() -> ScheduledRunResult:
@@ -70,7 +75,7 @@ def run_scan_and_analyze() -> ScheduledRunResult:
             logger.exception("Scheduled inbox scan failed")
 
         try:
-            analysis_result = analyze_pending(db_session, settings)
+            analysis_result = _analyze_all_accounts(settings)
             analyzed_count = analysis_result.analyzed_count
             errors.extend(analysis_result.errors)
             mark_analyze_result(
@@ -99,6 +104,8 @@ def run_scan_and_analyze() -> ScheduledRunResult:
     result = ScheduledRunResult(
         imported_count=imported_count,
         analyzed_count=analyzed_count,
+        skipped_count=0,
+        failed_count=0,
         errors_count=len(errors),
         errors=errors,
     )
@@ -141,14 +148,61 @@ def run_scan_and_analyze() -> ScheduledRunResult:
 
 
 def run_session_token_cleanup() -> int:
-    db_session = SessionLocal()
-    try:
-        removed = cleanup_expired_session_tokens(db_session)
-        if removed:
-            logger.info("Session token cleanup removed %s expired token(s)", removed)
-        return removed
-    finally:
-        db_session.close()
+    removed_total = 0
+    for mailbox_id in list_account_database_ids():
+        db_session = open_account_session(mailbox_id)
+        try:
+            removed_total += cleanup_expired_session_tokens(db_session)
+        finally:
+            db_session.close()
+    if removed_total:
+        logger.info("Session token cleanup removed %s expired token(s)", removed_total)
+    return removed_total
+
+
+def run_email_retention_cleanup() -> int:
+    pruned_total = 0
+    attachment_total = 0
+    for mailbox_id in list_account_database_ids():
+        db_session = open_account_session(mailbox_id)
+        try:
+            result = cleanup_email_retention(db_session)
+            pruned_total += result.pruned_count
+            attachment_total += result.attachment_count
+        finally:
+            db_session.close()
+    if pruned_total or attachment_total:
+        logger.info(
+            "Email retention cleanup pruned %s email(s) and removed %s attachment(s)",
+            pruned_total,
+            attachment_total,
+        )
+    return pruned_total
+
+
+def _analyze_all_accounts(settings) -> ScheduledRunResult:
+    total_analyzed = 0
+    total_failed = 0
+    total_skipped = 0
+    errors: list[str] = []
+    for mailbox in get_enabled_mailbox_configs() or []:
+        db_session = open_account_session(mailbox.id)
+        try:
+            result = analyze_pending(db_session, settings)
+            total_analyzed += result.analyzed_count
+            total_failed += result.failed_count
+            total_skipped += result.skipped_count
+            errors.extend(result.errors)
+        finally:
+            db_session.close()
+    return ScheduledRunResult(
+        imported_count=0,
+        analyzed_count=total_analyzed,
+        skipped_count=total_skipped,
+        failed_count=total_failed,
+        errors_count=len(errors),
+        errors=errors,
+    )
 
 
 def create_scheduler(config) -> BackgroundScheduler:
@@ -172,6 +226,13 @@ def create_scheduler(config) -> BackgroundScheduler:
         trigger="interval",
         hours=1,
         id=SESSION_TOKEN_CLEANUP_JOB_ID,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_email_retention_cleanup,
+        trigger="interval",
+        hours=1,
+        id=RETENTION_CLEANUP_JOB_ID,
         replace_existing=True,
     )
     return scheduler

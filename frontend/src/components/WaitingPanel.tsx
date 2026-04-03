@@ -1,1 +1,0 @@
-export { WaitingPanel } from "../AppLegacy";

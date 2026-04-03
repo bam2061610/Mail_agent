@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
-SETTINGS_FILE_PATH = DATA_DIR / "settings.local.json"
 SECRET_SETTING_KEYS = {
     "imap_password",
     "smtp_password",
@@ -35,6 +34,9 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+    interface_language: str = Field(default="ru", alias="INTERFACE_LANGUAGE")
+    signature: str = Field(default="", alias="SIGNATURE")
+    ai_auto_spam_enabled: bool = Field(default=False, alias="AI_AUTO_SPAM_ENABLED")
     ai_max_retries: int = Field(default=3, alias="AI_MAX_RETRIES")
     ai_timeout_seconds: int = Field(default=60, alias="AI_TIMEOUT_SECONDS")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
@@ -72,28 +74,40 @@ settings = Settings()
 
 
 def load_runtime_settings() -> dict[str, Any]:
-    if not SETTINGS_FILE_PATH.exists():
-        return {}
+    from app.db import open_account_session
+    from app.models.runtime_setting import RuntimeSetting
 
+    db = open_account_session()
     try:
-        return json.loads(SETTINGS_FILE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+        row = db.query(RuntimeSetting).order_by(RuntimeSetting.id.desc()).first()
+        if row is None:
+            return {}
+        return _runtime_setting_to_dict(row)
+    finally:
+        db.close()
 
 
 def save_runtime_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    current = load_runtime_settings()
-    for key, value in updates.items():
-        if value is None:
-            continue
-        current[key] = value
+    from app.db import open_account_session
+    from app.models.runtime_setting import RuntimeSetting
 
-    SETTINGS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_FILE_PATH.write_text(
-        json.dumps(current, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    return current
+    db = open_account_session()
+    try:
+        row = db.query(RuntimeSetting).order_by(RuntimeSetting.id.desc()).first()
+        if row is None:
+            row = RuntimeSetting()
+            db.add(row)
+
+        for key, value in updates.items():
+            if value is None:
+                continue
+            _apply_runtime_setting_update(row, key, value)
+
+        db.commit()
+        db.refresh(row)
+        return _runtime_setting_to_dict(row)
+    finally:
+        db.close()
 
 
 def get_effective_settings() -> SimpleNamespace:
@@ -111,4 +125,51 @@ def get_safe_settings_view() -> dict[str, Any]:
     payload["has_imap_password"] = bool(getattr(effective, "imap_password", None))
     payload["has_smtp_password"] = bool(getattr(effective, "smtp_password", None))
     payload["has_openai_api_key"] = bool(getattr(effective, "openai_api_key", None))
+    payload["ai_auto_spam_enabled"] = bool(getattr(effective, "ai_auto_spam_enabled", False))
     return payload
+
+
+def _runtime_setting_to_dict(row: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "app_name": row.app_name,
+        "app_env": row.app_env,
+        "debug": row.debug,
+        "imap_host": row.imap_host,
+        "imap_port": row.imap_port,
+        "imap_user": row.imap_user,
+        "imap_password": row.imap_password,
+        "smtp_host": row.smtp_host,
+        "smtp_port": row.smtp_port,
+        "smtp_user": row.smtp_user,
+        "smtp_password": row.smtp_password,
+        "smtp_use_tls": row.smtp_use_tls,
+        "smtp_use_ssl": row.smtp_use_ssl,
+        "openai_api_key": row.openai_api_key,
+        "deepseek_base_url": row.deepseek_base_url,
+        "deepseek_model": row.deepseek_model,
+        "interface_language": row.interface_language,
+        "signature": row.signature,
+        "ai_auto_spam_enabled": row.ai_auto_spam_enabled,
+        "ai_max_retries": row.ai_max_retries,
+        "ai_timeout_seconds": row.ai_timeout_seconds,
+        "redis_url": row.redis_url,
+        "scan_interval_minutes": row.scan_interval_minutes,
+        "followup_overdue_days": row.followup_overdue_days,
+        "catchup_absence_hours": row.catchup_absence_hours,
+        "sent_review_batch_limit": row.sent_review_batch_limit,
+    }
+    cors_value = row.cors_origins_json
+    if cors_value:
+        try:
+            payload["cors_origins"] = json.loads(cors_value)
+        except Exception:  # noqa: BLE001
+            payload["cors_origins"] = []
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _apply_runtime_setting_update(row: Any, key: str, value: Any) -> None:
+    if key == "cors_origins":
+        row.cors_origins_json = json.dumps(value, ensure_ascii=False)
+        return
+    if hasattr(row, key):
+        setattr(row, key, value)

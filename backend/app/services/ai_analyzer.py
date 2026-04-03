@@ -4,13 +4,20 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError, field_validator, model_validator
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.contact import Contact
 from app.models.action_log import ActionLog
 from app.models.email import Email
+from app.services.deepseek_client import (
+    DeepSeekError,
+    DeepSeekRateLimitError,
+    DeepSeekResponseError,
+    DeepSeekTimeoutError,
+    call_deepseek_chat,
+)
 from app.services.language_service import choose_reply_language, normalize_language, update_email_languages
 from app.services.preference_profile import build_preference_prompt_block, get_preference_profile
 from app.services.rule_engine import apply_rules_to_email, is_trusted_sender
@@ -24,6 +31,10 @@ VALID_CATEGORIES = {"RFQ", "Invoice", "Logistics", "Support", "Spam", "Other"}
 
 class AnalysisResult(BaseModel):
     summary: str
+    who_is_writing: str | None = None
+    to_whom: str | None = None
+    core_request: str | None = None
+    required_action: str | None = None
     priority: str = "medium"
     category: str = "Other"
     action_required: bool = False
@@ -58,6 +69,16 @@ class AnalysisResult(BaseModel):
             return value.strip()
         return "No summary generated."
 
+    @field_validator("who_is_writing", "to_whom", "core_request", "required_action", mode="before")
+    @classmethod
+    def normalize_summary_parts(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return str(value)
+
     @field_validator("action_description", "draft_reply", mode="before")
     @classmethod
     def normalize_optional_text(cls, value: object) -> str | None:
@@ -89,6 +110,21 @@ class AnalysisResult(BaseModel):
         except (TypeError, ValueError):
             return None
         return max(0.0, min(1.0, confidence))
+
+    @model_validator(mode="after")
+    def ensure_summary_block(self) -> "AnalysisResult":
+        if self.summary != "No summary generated.":
+            return self
+        parts = [
+            ("who_is_writing", self.who_is_writing),
+            ("to_whom", self.to_whom),
+            ("core_request", self.core_request),
+            ("required_action", self.required_action),
+        ]
+        rendered = [f"{label}: {value}" for label, value in parts if value]
+        if rendered:
+            self.summary = " | ".join(rendered)
+        return self
 
 
 @dataclass(slots=True)
@@ -130,20 +166,26 @@ class DraftResponse(BaseModel):
 
 
 def build_system_prompt(config, preference_block: str | None = None) -> str:
+    language_code = normalize_language(getattr(config, "interface_language", None)) or "ru"
+    language_name = {"ru": "Russian", "en": "English", "tr": "Turkish"}.get(language_code, "Russian")
     base_prompt = (
         "You are an email assistant for Orhun Medical, a network of medical centers "
         "in Kazakhstan. You analyze incoming emails and provide structured analysis. "
         "The company receives emails from medical equipment suppliers, logistics "
         "companies, and partners. The primary language of correspondence is Russian "
-        "and English. Always respond in JSON format only, no markdown, no preamble."
+        "and English. Always respond in JSON format only, no markdown, no preamble. "
+        f"Write the summary and draft reply in {language_name}. "
+        "The summary must clearly cover who is writing, to whom, the core request or offer, "
+        "and what action is required."
     )
     if preference_block:
         return f"{base_prompt}\n\n{preference_block}"
     return base_prompt
 
 
-def build_user_payload(email_record: Email, thread_history: list[Email]) -> str:
+def build_user_payload(email_record: Email, thread_history: list[Email], *, interface_language: str | None = None) -> str:
     payload = {
+        "interface_language": normalize_language(interface_language) or "ru",
         "current_email": {
             "id": email_record.id,
             "subject": email_record.subject,
@@ -168,7 +210,11 @@ def build_user_payload(email_record: Email, thread_history: list[Email]) -> str:
             for item in thread_history
         ],
         "expected_json_schema": {
-            "summary": "2-3 sentence summary",
+            "summary": "concise summary in the interface language",
+            "who_is_writing": "who sent the message",
+            "to_whom": "who the message is addressed to",
+            "core_request": "core request or offer",
+            "required_action": "what action is required",
             "priority": "critical|high|medium|low|spam",
             "category": "RFQ|Invoice|Logistics|Support|Spam|Other",
             "action_required": True,
@@ -188,7 +234,7 @@ def analyze_email(
     preference_block: str | None = None,
 ) -> AnalysisResult:
     system_prompt = build_system_prompt(config, preference_block=preference_block)
-    user_payload = build_user_payload(email_record, thread_history)
+    user_payload = build_user_payload(email_record, thread_history, interface_language=getattr(config, "interface_language", None))
     last_error: Exception | None = None
 
     for attempt in range(1, max(1, config.ai_max_retries) + 1):
@@ -203,6 +249,9 @@ def analyze_email(
         except (ValueError, ValidationError) as exc:
             last_error = exc
             logger.warning("AI analysis parse/validation failed on attempt %s: %s", attempt, exc)
+        except (DeepSeekTimeoutError, DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekError) as exc:
+            last_error = exc
+            logger.warning("AI analysis request failed on attempt %s: %s", attempt, exc)
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             logger.warning("AI analysis request failed on attempt %s: %s", attempt, exc)
@@ -287,7 +336,7 @@ def analyze_pending(db_session: Session, config, limit: int | None = None) -> An
         thread_history = _load_thread_history(db_session, email_record)
         try:
             result = analyze_email(email_record, thread_history, config, preference_block=preference_block)
-            save_analysis_result(db_session, email_record, result)
+            save_analysis_result(db_session, email_record, result, config=config)
             analyzed_count += 1
         except Exception as exc:  # noqa: BLE001
             db_session.rollback()
@@ -305,12 +354,12 @@ def analyze_pending(db_session: Session, config, limit: int | None = None) -> An
     )
 
 
-def save_analysis_result(db_session: Session, email_record: Email, analysis_result: AnalysisResult) -> None:
+def save_analysis_result(db_session: Session, email_record: Email, analysis_result: AnalysisResult, config=None) -> None:
     contact = None
     if email_record.sender_email:
         contact = db_session.query(Contact).filter(Contact.email == email_record.sender_email).first()
     update_email_languages(email_record, contact=contact)
-    email_record.ai_summary = analysis_result.summary
+    _save_thread_summary(db_session, email_record, analysis_result.summary)
     email_record.priority = analysis_result.priority
     email_record.category = analysis_result.category
     email_record.requires_reply = analysis_result.action_required
@@ -335,7 +384,8 @@ def save_analysis_result(db_session: Session, email_record: Email, analysis_resu
                 )
             )
     ai_marked_spam = analysis_result.category == "Spam" or analysis_result.priority == "spam"
-    if ai_marked_spam and not is_trusted_sender(email_record):
+    auto_spam_enabled = bool(getattr(config, "ai_auto_spam_enabled", False))
+    if ai_marked_spam and auto_spam_enabled and not is_trusted_sender(email_record):
         email_record.is_spam = True
         email_record.status = "spam"
         email_record.spam_source = "ai"
@@ -362,14 +412,16 @@ def generate_personalized_draft(
     template_id: str | None = None,
     tone: str | None = None,
     length: str | None = None,
+    custom_prompt: str | None = None,
     preference_block: str | None = None,
 ) -> DraftResponse:
-    language = choose_reply_language(email_record, explicit_language=target_language)
+    language = choose_reply_language(email_record, explicit_language=target_language, thread_history=thread_history)
     template = get_template(template_id) if template_id else None
     system_prompt = (
         "You are an email assistant for Orhun Medical in Kazakhstan. "
         "Generate a professional business email draft in the requested target language. "
         "If a template is provided, preserve its intention and structure while personalizing it to the thread. "
+        "If custom instructions are provided, follow them unless they conflict with policy or the thread. "
         "Always return JSON only."
     )
     if preference_block:
@@ -380,6 +432,7 @@ def generate_personalized_draft(
         "target_language": language,
         "tone": tone or "professional",
         "length": length or "medium",
+        "custom_prompt": _truncate(custom_prompt, 1200),
         "current_email": {
             "subject": email_record.subject,
             "sender_name": email_record.sender_name,
@@ -423,10 +476,11 @@ def rewrite_draft(
     current_draft: str,
     instruction: str,
     config,
+    thread_history: list[Email] | None = None,
     target_language: str | None = None,
     preference_block: str | None = None,
 ) -> DraftResponse:
-    language = choose_reply_language(email_record, explicit_language=target_language)
+    language = choose_reply_language(email_record, explicit_language=target_language, thread_history=thread_history)
     system_prompt = (
         "You are an email assistant for Orhun Medical in Kazakhstan. "
         "Rewrite the provided draft according to the user instruction. "
@@ -460,35 +514,11 @@ def rewrite_draft(
 
 
 def _call_model_once(system_prompt: str, user_payload: str, config) -> str:
-    client = _create_openai_client(config)
-    response = client.chat.completions.create(
-        model=config.deepseek_model,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_payload},
-        ],
-    )
-    content = response.choices[0].message.content
-    if not content:
-        raise ValueError("Empty model response")
-    return content
-
-
-def _create_openai_client(config):
-    try:
-        from openai import OpenAI
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("openai package is required for AI analysis") from exc
-
-    if not config.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is not configured")
-
-    return OpenAI(
-        api_key=config.openai_api_key,
-        base_url=config.deepseek_base_url,
-        timeout=config.ai_timeout_seconds,
-    )
+    return call_deepseek_chat(
+        system_prompt=system_prompt,
+        user_payload=user_payload,
+        config=config,
+    ).content
 
 
 def _extract_json_object(raw_response: str) -> dict[str, Any]:
@@ -523,6 +553,28 @@ def _load_thread_history(db_session: Session, email_record: Email) -> list[Email
         .limit(5)
         .all()
     )
+
+
+def _save_thread_summary(db_session: Session, email_record: Email, summary: str) -> None:
+    thread_keys = [key for key in [email_record.thread_id, email_record.message_id] if key]
+    if not thread_keys:
+        email_record.ai_summary = summary
+        db_session.add(email_record)
+        return
+
+    thread_emails = (
+        db_session.query(Email)
+        .filter(or_(Email.thread_id.in_(thread_keys), Email.message_id.in_(thread_keys)))
+        .all()
+    )
+    if not thread_emails:
+        email_record.ai_summary = summary
+        db_session.add(email_record)
+        return
+
+    for item in thread_emails:
+        item.ai_summary = summary
+        db_session.add(item)
 
 
 def _truncate(value: str | None, limit: int) -> str | None:

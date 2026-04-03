@@ -100,11 +100,10 @@ def reset_user_password(db_session: Session, user: User, new_password: str) -> U
 
 
 def ensure_default_admin() -> None:
-    # Import lazily so tests/runtime that monkeypatch app.db.SessionLocal
-    # always use the active session factory.
-    from app import db as app_db
+    # Import lazily so tests/runtime use the active account database session.
+    from app.db import open_account_session
 
-    db = app_db.SessionLocal()
+    db = open_account_session("default")
     try:
         existing = db.query(User).count()
         if existing > 0:

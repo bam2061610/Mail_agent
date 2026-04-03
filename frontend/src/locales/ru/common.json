@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Orhun Mail Agent",
-    "tagline": "Панель действий для входящих писем, черновиков, автоматизации и контроля.",
+    "tagline": "Спокойный умный inbox для читаемых тредов и быстрых ответов.",
     "workspace": "Рабочая область",
     "logout": "Выйти",
     "signingOut": "Выход...",
@@ -12,8 +12,8 @@
   },
   "auth": {
     "checking": "Проверка авторизации...",
-    "teamLogin": "Вход в команду",
-    "signinHint": "Войдите, чтобы открыть рабочее пространство Orhun Mail Agent.",
+    "teamLogin": "Вход в почту",
+    "signinHint": "Войдите, чтобы открыть свой inbox.",
     "email": "Email",
     "password": "Пароль",
     "signingIn": "Вход...",
@@ -21,6 +21,7 @@
     "defaultCreds": "Стандартные учетные данные при первом запуске: admin@orhun.local / admin123"
   },
   "nav": {
+    "inbox": "Входящие",
     "focus": "Фокус",
     "active": "Активная очередь",
     "sent": "Отправленные",
@@ -112,7 +113,28 @@
     "draftHelpful": "Черновик полезен",
     "draftNeedsWork": "Черновик нужно доработать",
     "summaryHeading": "Сводка",
-    "originalMessage": "Оригинал письма"
+    "originalMessage": "Оригинал письма",
+    "replyTitle": "Ответ",
+    "readTitle": "Просмотр письма",
+    "replyNow": "Ответить",
+    "replyWithAi": "Ответить с AI",
+    "replyLater": "Ответить позже",
+    "closeModal": "Закрыть",
+    "backToRead": "Назад к письму",
+    "to": "Кому",
+    "cc": "Копия",
+    "bcc": "Скрытая копия",
+    "subject": "Тема",
+    "customPrompt": "Промпт для AI",
+    "customPromptHint": "Необязательные указания для генерации черновика.",
+    "customPromptPlaceholder": "Коротко опишите нужный стиль ответа...",
+    "replyDraftHint": "Перед отправкой можно отредактировать черновик.",
+    "signature": "Подпись",
+    "signatureHint": "Этот текст будет добавлен перед цитатой оригинального письма.",
+    "signaturePlaceholder": "С уважением,\nВаше имя",
+    "includeOriginal": "Будет добавлено при отправке",
+    "replyHint": "Текст ответа можно отправить как есть или отредактировать.",
+    "replyWithAiTitle": "Открыть черновик ответа с помощью AI"
   },
   "waitingPanel": {
     "title": "Очередь ожидания",

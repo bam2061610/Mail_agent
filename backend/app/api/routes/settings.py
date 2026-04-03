@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_safe_settings_view, save_runtime_settings
-from app.db import SessionLocal
+from app.db import open_account_session
 from app.models.action_log import ActionLog
 from app.models.user import User
 from app.schemas.system import (
@@ -115,7 +115,7 @@ def scan_single_mailbox(
     mailbox = get_mailbox(mailbox_id, redact_secrets=False)
     if mailbox is None:
         raise HTTPException(status_code=404, detail="Mailbox not found")
-    db = SessionLocal()
+    db = open_account_session(mailbox_id)
     try:
         result = scan_inbox(db, to_runtime_mailbox(mailbox))
         _log_mailbox_action(
@@ -134,7 +134,7 @@ def scan_single_mailbox(
 
 
 def _log_mailbox_action(action_type: str, payload: dict, user: User | None = None) -> None:
-    db = SessionLocal()
+    db = open_account_session()
     try:
         db.add(
             ActionLog(

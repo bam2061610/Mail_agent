@@ -15,7 +15,7 @@ from app.services import (
     attachment_service,
     digest_service,
     diagnostics_service,
-    mailbox_service,
+    mail_watcher,
     preference_profile,
     rule_engine,
     template_service,
@@ -32,10 +32,8 @@ def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
     backups_dir.mkdir(parents=True, exist_ok=True)
     attachments_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(app_config, "SETTINGS_FILE_PATH", data_dir / "settings.local.json")
     monkeypatch.setattr(rule_engine, "RULES_FILE_PATH", data_dir / "rules.json")
     monkeypatch.setattr(template_service, "TEMPLATES_FILE_PATH", data_dir / "templates.json")
-    monkeypatch.setattr(mailbox_service, "MAILBOXES_FILE_PATH", data_dir / "mailboxes.json")
     monkeypatch.setattr(preference_profile, "PREFERENCE_PROFILE_PATH", data_dir / "preference_profile.json")
     monkeypatch.setattr(digest_service, "STATE_FILE_PATH", data_dir / "digest_state.json")
     monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", attachments_dir)
@@ -67,6 +65,8 @@ def db_session(isolated_paths: dict[str, Path], monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(app_db, "engine", test_engine)
     monkeypatch.setattr(app_db, "SessionLocal", TestSessionLocal)
+    app_db._ACCOUNT_ENGINE_CACHE.clear()
+    app_db._ACCOUNT_SESSION_CACHE.clear()
 
     Base.metadata.drop_all(bind=test_engine)
     Base.metadata.create_all(bind=test_engine)
@@ -86,6 +86,10 @@ def client(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> Generator[Te
 
     monkeypatch.setattr(main_module, "start_scheduler", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main_module, "stop_scheduler", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_module, "start_mail_watchers", lambda: None)
+    monkeypatch.setattr(main_module, "stop_mail_watchers", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(mail_watcher, "start_mail_watchers", lambda: None)
+    monkeypatch.setattr(mail_watcher, "stop_mail_watchers", lambda *_args, **_kwargs: None)
 
     def _override_get_db() -> Generator[Session, None, None]:
         yield db_session

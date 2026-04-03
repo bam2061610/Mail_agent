@@ -2,8 +2,11 @@ from types import SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from app.models.attachment import Attachment
 from app.models.email import Email
+from app.services.deepseek_client import DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekTimeoutError
 from app.services.smtp_sender import SendReplyResult
 
 
@@ -63,20 +66,44 @@ def test_reply_email_with_mocked_smtp(client, admin_auth_headers, admin_user, sa
 def test_generate_draft_with_mocked_ai(client, admin_auth_headers, sample_email, monkeypatch):
     import app.api.routes.emails as emails_route
 
+    captured = {}
+
     monkeypatch.setattr(
         emails_route,
         "generate_personalized_draft",
-        lambda **_kwargs: SimpleNamespace(draft_reply="Generated draft", subject="Re: x", target_language="en"),
+        lambda **kwargs: captured.update(kwargs) or SimpleNamespace(draft_reply="Generated draft", subject="Re: x", target_language="en"),
     )
     response = client.post(
         f"/api/emails/{sample_email.id}/generate-draft",
         headers=admin_auth_headers,
-        json={"target_language": "en"},
+        json={"target_language": "en", "custom_prompt": "Keep it short."},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["draft_reply"] == "Generated draft"
     assert payload["target_language"] == "en"
+    assert captured["custom_prompt"] == "Keep it short."
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_status", "expected_fragment"),
+    [
+        (DeepSeekTimeoutError("timed out"), 504, "timed out"),
+        (DeepSeekRateLimitError("slow down"), 429, "rate limit"),
+        (DeepSeekResponseError("invalid"), 502, "Unexpected AI response"),
+    ],
+)
+def test_generate_draft_returns_controlled_ai_errors(client, admin_auth_headers, sample_email, monkeypatch, exc, expected_status, expected_fragment):
+    import app.api.routes.emails as emails_route
+
+    monkeypatch.setattr(emails_route, "generate_personalized_draft", lambda **_kwargs: (_ for _ in ()).throw(exc))
+    response = client.post(
+        f"/api/emails/{sample_email.id}/generate-draft",
+        headers=admin_auth_headers,
+        json={"target_language": "en"},
+    )
+    assert response.status_code == expected_status
+    assert expected_fragment in response.json().get("detail", "")
 
 
 def test_reply_email_returns_specific_smtp_failure(client, admin_auth_headers, sample_email, monkeypatch):

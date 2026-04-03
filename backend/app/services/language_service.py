@@ -73,9 +73,11 @@ def choose_reply_language(
     email: Email,
     explicit_language: str | None = None,
     contact: Contact | None = None,
+    thread_history: list[Email] | None = None,
 ) -> str:
     for candidate in [
         normalize_language(explicit_language),
+        normalize_language(_latest_thread_language(thread_history, email)),
         normalize_language(email.preferred_reply_language),
         normalize_language(contact.preferred_language if contact else None),
         normalize_language(email.detected_source_language),
@@ -94,3 +96,29 @@ def update_email_languages(
     email.detected_source_language = decision.detected_language
     email.preferred_reply_language = choose_reply_language(email, explicit_reply_language, contact)
     return decision
+
+
+def _latest_thread_language(thread_history: list[Email] | None, current_email: Email) -> str | None:
+    candidates = [current_email, *(thread_history or [])]
+    latest_item = None
+    latest_dt = None
+    for item in candidates:
+        item_dt = getattr(item, "date_received", None)
+        if item_dt is None:
+            continue
+        if latest_dt is None or item_dt > latest_dt:
+            latest_dt = item_dt
+            latest_item = item
+    if latest_item is None:
+        latest_item = current_email
+    for value in [
+        getattr(latest_item, "preferred_reply_language", None),
+        getattr(latest_item, "detected_source_language", None),
+    ]:
+        normalized = normalize_language(value)
+        if normalized:
+            return normalized
+    text = getattr(latest_item, "body_text", None) or getattr(latest_item, "body_html", None)
+    subject = getattr(latest_item, "subject", None)
+    decision = detect_language(text, subject)
+    return decision.detected_language

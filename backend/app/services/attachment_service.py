@@ -120,6 +120,21 @@ def get_attachment(db_session: Session, attachment_id: int) -> Attachment | None
     return db_session.query(Attachment).filter(Attachment.id == attachment_id).first()
 
 
+def delete_email_attachments(db_session: Session, email_id: int, *, delete_files: bool = True) -> int:
+    attachments = list_email_attachments(db_session, email_id)
+    if not attachments:
+        return 0
+
+    removed_count = 0
+    for attachment in attachments:
+        if delete_files:
+            _delete_attachment_file(attachment)
+        db_session.delete(attachment)
+        removed_count += 1
+    db_session.flush()
+    return removed_count
+
+
 def get_attachment_file_path(attachment: Attachment) -> Path:
     return Path(attachment.local_storage_path).resolve()
 
@@ -155,6 +170,33 @@ def _persist_attachment_bytes(storage_dir: Path, attachment: ParsedAttachment) -
     if not target.exists():
         target.write_bytes(attachment.payload)
     return target
+
+
+def _delete_attachment_file(attachment: Attachment) -> None:
+    try:
+        file_path = Path(attachment.local_storage_path).resolve(strict=False)
+    except Exception:  # noqa: BLE001
+        logger.warning("Skipping attachment file cleanup for attachment_id=%s due to invalid path", attachment.id)
+        return
+
+    root = ATTACHMENTS_ROOT.resolve(strict=False)
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        logger.warning(
+            "Skipping attachment file cleanup outside attachments root for attachment_id=%s path=%s",
+            attachment.id,
+            file_path,
+        )
+        return
+
+    if file_path.exists() and file_path.is_file():
+        try:
+            file_path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError:  # noqa: BLE001
+            logger.exception("Failed to delete attachment file for attachment_id=%s", attachment.id)
 
 
 def _decode_filename(raw: str | None) -> str | None:

@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.actions import router as actions_router
@@ -12,11 +12,11 @@ from app.api.routes.health import router as health_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.stats import router as stats_router
-from app.api.routes.users import router as users_router
 from app.config import settings
 from app.core.logging import configure_logging
-from app.db import create_tables
+from app.db import create_tables, reset_current_mailbox_id, set_current_mailbox_id
 from app.scheduler import start_scheduler, stop_scheduler
+from app.services.mail_watcher import start_mail_watchers, stop_mail_watchers
 from app.services.user_service import ensure_default_admin
 
 
@@ -26,9 +26,12 @@ async def lifespan(app: FastAPI):
     create_tables()
     ensure_default_admin()
     scheduler = start_scheduler(app)
+    mail_watchers = start_mail_watchers()
+    app.state.mail_watchers = mail_watchers
     try:
         yield
     finally:
+        stop_mail_watchers(getattr(app.state, "mail_watchers", None))
         stop_scheduler(scheduler)
 
 
@@ -37,6 +40,17 @@ app = FastAPI(
     debug=settings.debug,
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def mailbox_context_middleware(request: Request, call_next):
+    mailbox_id = request.query_params.get("mailbox_id") or request.headers.get("X-Mailbox-Id") or "default"
+    token = set_current_mailbox_id(mailbox_id)
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        reset_current_mailbox_id(token)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,7 +62,6 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
-app.include_router(users_router)
 app.include_router(emails_router)
 app.include_router(contacts_router)
 app.include_router(stats_router)

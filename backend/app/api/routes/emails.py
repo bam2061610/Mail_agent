@@ -13,7 +13,6 @@ from app.models.action_log import ActionLog
 from app.models.attachment import Attachment
 from app.models.contact import Contact
 from app.models.email import Email
-from app.models.task import Task
 from app.models.user import User
 from app.schemas.email import (
     AttachmentItem,
@@ -23,19 +22,16 @@ from app.schemas.email import (
     EmailFeedbackRequest,
     EmailSetReplyLanguageRequest,
     EmailRewriteDraftRequest,
-    EmailAssignRequest,
     FeedbackResponse,
-    FollowupDraftResponse,
     EmailListItem,
     EmailReplyRequest,
     EmailStatusUpdateRequest,
     EmailThreadResponse,
     DraftFeedbackRequest,
-    WaitingCloseRequest,
-    WaitingStartRequest,
 )
 from app.schemas.system import ErrorResponse
-from app.services.ai_analyzer import generate_followup_draft, generate_personalized_draft, rewrite_draft
+from app.services.ai_analyzer import generate_personalized_draft, rewrite_draft
+from app.services.deepseek_client import DeepSeekError, DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekTimeoutError
 from app.services.attachment_service import (
     build_attachment_download_payload,
     get_attachment,
@@ -46,22 +42,20 @@ from app.services.feedback_service import (
     record_decision_feedback,
     record_draft_feedback,
 )
-from app.services.followup_tracker import (
-    close_waiting,
-    get_waiting_threads,
-    get_thread_waiting_state,
-    mark_thread_waiting,
-)
 from app.services.preference_profile import build_preference_prompt_block, get_preference_profile, rebuild_preference_profile
 from app.services.spam_service import annotate_spam_review_metadata, confirm_email_spam, restore_email_from_spam
 from app.services.mail.smtp_send import send_reply
 from app.services.language_service import normalize_language
+from app.services.imap_mailbox_actions import archive_email_via_imap, move_email_via_imap, reply_later_email_via_imap, spam_email_via_imap
 from app.services.mailbox_service import (
     SENT_DIRECTION_VALUES,
+    get_default_runtime_mailbox_from_settings,
+    get_mailbox,
     get_outgoing_mailbox_for_email,
     get_thread_lookup_keys,
     is_outgoing_direction,
     is_sent_folder,
+    to_runtime_mailbox,
 )
 from app.services.permission_service import require_permission
 from app.services.sent_review_service import (
@@ -73,9 +67,17 @@ from app.services.sent_review_service import (
 from app.services.template_service import get_template
 
 router = APIRouter(prefix="/api/emails", tags=["emails"])
-ALLOWED_STATUSES = {"new", "read", "archived", "spam", "replied"}
+ALLOWED_STATUSES = {"new", "read", "archived", "spam", "replied", "reply_later"}
 INBOUND_DIRECTION_VALUES = ("inbound", "incoming", "received")
 logger = logging.getLogger(__name__)
+
+
+def _resolve_runtime_mailbox_for_email(email: Email):
+    if getattr(email, "mailbox_id", None):
+        mailbox = get_mailbox(str(email.mailbox_id), redact_secrets=False)
+        if mailbox is not None:
+            return to_runtime_mailbox(mailbox)
+    return get_default_runtime_mailbox_from_settings()
 
 
 @router.get("", response_model=list[EmailListItem])
@@ -146,11 +148,6 @@ def list_emails(
         .limit(limit)
         .all()
     )
-    waiting_by_thread = {item.thread_id: item for item in get_waiting_threads(db)}
-    for email in emails:
-        waiting_state = waiting_by_thread.get(email.thread_id or email.message_id or "")
-        setattr(email, "waiting_state", waiting_state.state if waiting_state else None)
-        setattr(email, "wait_days", waiting_state.wait_days if waiting_state else None)
     annotate_spam_review_metadata(db, emails)
     _attach_attachment_counts(db, emails)
     return emails
@@ -165,9 +162,6 @@ def get_email(
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
-    waiting_state = get_thread_waiting_state(db, email.thread_id or email.message_id or "")
-    setattr(email, "waiting_state", waiting_state.state if waiting_state else None)
-    setattr(email, "wait_days", waiting_state.wait_days if waiting_state else None)
     annotate_spam_review_metadata(db, [email])
     _attach_attachment_counts(db, [email])
     return email
@@ -206,8 +200,6 @@ def reply_to_email(
     original_email = db.query(Email).filter(Email.id == email_id).first()
     if original_email is None:
         raise HTTPException(status_code=404, detail="Email not found")
-    thread_key = original_email.thread_id or original_email.message_id or f"email-{original_email.id}"
-    previous_waiting_state = get_thread_waiting_state(db, thread_key)
 
     to_addresses = request.to or ([original_email.sender_email] if original_email.sender_email else [])
     if not to_addresses:
@@ -305,26 +297,7 @@ def reply_to_email(
             actor="user",
         )
 
-        mark_thread_waiting(
-            db_session=db,
-            thread_id=thread_key,
-            started_at=datetime.now(timezone.utc),
-            email_id=original_email.id,
-            actor="api",
-        )
-
         _upsert_contact(db, original_email.sender_email, original_email.sender_name, increment_sent=True)
-        if previous_waiting_state is not None:
-            db.add(
-                ActionLog(
-                    user_id=current_user.id,
-                    email_id=original_email.id,
-                    task_id=previous_waiting_state.task_id,
-                    action_type="followup_sent",
-                    actor=current_user.email,
-                    details_json=json.dumps({"thread_id": thread_key}, ensure_ascii=False),
-                )
-            )
         if draft_feedback.action_type == "draft_sent_after_edit":
             db.add(
                 ActionLog(
@@ -346,9 +319,6 @@ def reply_to_email(
         logger.exception("Preference profile rebuild failed after reply for email_id=%s", email_id)
 
     db.refresh(original_email)
-    waiting_state = get_thread_waiting_state(db, original_email.thread_id or original_email.message_id or "")
-    setattr(original_email, "waiting_state", waiting_state.state if waiting_state else None)
-    setattr(original_email, "wait_days", waiting_state.wait_days if waiting_state else None)
     return original_email
 
 
@@ -425,31 +395,63 @@ def update_email_status(
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
 
+    mailbox_config = _resolve_runtime_mailbox_for_email(email)
     previous_spam_state = email.is_spam
-    email.status = request.status
-    if request.status == "spam":
-        email.is_spam = True
-        db.add(
-            ActionLog(
-                user_id=current_user.id,
-                email_id=email.id,
-                action_type="ai_spam_confirmed",
-                actor=current_user.email,
-                details_json=json.dumps({"source": "status_update"}, ensure_ascii=False),
+
+    try:
+        if request.status == "spam":
+            if mailbox_config is not None:
+                spam_email_via_imap(db, email, mailbox_config)
+            else:
+                logger.warning("Mailbox configuration missing; skipping IMAP spam move for email_id=%s", email.id)
+                email.status = "spam"
+                email.is_spam = True
+                email.spam_source = "user"
+                email.spam_reason = "Moved to spam folder"
+                email.folder = "Spam"
+                email.requires_reply = False
+                db.add(email)
+                db.commit()
+            db.add(
+                ActionLog(
+                    user_id=current_user.id,
+                    email_id=email.id,
+                    action_type="ai_spam_confirmed",
+                    actor=current_user.email,
+                    details_json=json.dumps({"source": "status_update"}, ensure_ascii=False),
+                )
             )
-        )
-    elif previous_spam_state and request.status != "spam":
-        email.is_spam = False
-        db.add(
-            ActionLog(
-                user_id=current_user.id,
-                email_id=email.id,
-                action_type="ai_spam_restored",
-                actor=current_user.email,
-                details_json=json.dumps({"source": "status_update", "new_status": request.status}, ensure_ascii=False),
-            )
-        )
-    db.add(email)
+        elif request.status == "archived":
+            if mailbox_config is not None:
+                archive_email_via_imap(db, email, mailbox_config)
+            else:
+                logger.warning("Mailbox configuration missing; skipping IMAP archive move for email_id=%s", email.id)
+                email.status = "archived"
+                email.folder = "Archive"
+                email.requires_reply = False
+                db.add(email)
+                db.commit()
+        elif request.status == "reply_later":
+            if mailbox_config is not None:
+                reply_later_email_via_imap(db, email, mailbox_config)
+            else:
+                logger.warning("Mailbox configuration missing; skipping IMAP reply-later move for email_id=%s", email.id)
+                email.status = "archived"
+                email.folder = "Reply Later"
+                email.requires_reply = False
+                db.add(email)
+                db.commit()
+        else:
+            email.status = request.status
+            if previous_spam_state and request.status != "spam":
+                email.is_spam = False
+            db.add(email)
+            db.commit()
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"IMAP action failed: {exc}") from exc
+
     db.add(
         ActionLog(
             user_id=current_user.id,
@@ -459,11 +461,18 @@ def update_email_status(
             details_json=json.dumps({"status": request.status}, ensure_ascii=False),
         )
     )
+    if request.status == "spam" and previous_spam_state:
+        db.add(
+            ActionLog(
+                user_id=current_user.id,
+                email_id=email.id,
+                action_type="ai_spam_restored",
+                actor=current_user.email,
+                details_json=json.dumps({"source": "status_update", "new_status": request.status}, ensure_ascii=False),
+            )
+        )
     db.commit()
     db.refresh(email)
-    waiting_state = get_thread_waiting_state(db, email.thread_id or email.message_id or "")
-    setattr(email, "waiting_state", waiting_state.state if waiting_state else None)
-    setattr(email, "wait_days", waiting_state.wait_days if waiting_state else None)
     annotate_spam_review_metadata(db, [email])
     _attach_attachment_counts(db, [email])
     return email
@@ -479,13 +488,17 @@ def restore_spam_message(
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
 
+    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    if mailbox_config is not None:
+        try:
+            move_email_via_imap(db, email, mailbox_config, "inbox", mark_seen=True)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=f"IMAP restore failed: {exc}") from exc
+
     restore_email_from_spam(db, email, actor=current_user.email)
     db.commit()
     rebuild_preference_profile(db)
     db.refresh(email)
-    waiting_state = get_thread_waiting_state(db, email.thread_id or email.message_id or "")
-    setattr(email, "waiting_state", waiting_state.state if waiting_state else None)
-    setattr(email, "wait_days", waiting_state.wait_days if waiting_state else None)
     annotate_spam_review_metadata(db, [email])
     _attach_attachment_counts(db, [email])
     return email
@@ -501,14 +514,52 @@ def confirm_spam_message(
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
 
+    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    if mailbox_config is not None:
+        try:
+            spam_email_via_imap(db, email, mailbox_config)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=f"IMAP spam move failed: {exc}") from exc
+
     confirm_email_spam(db, email, actor=current_user.email)
     db.commit()
     rebuild_preference_profile(db)
     db.refresh(email)
-    waiting_state = get_thread_waiting_state(db, email.thread_id or email.message_id or "")
-    setattr(email, "waiting_state", waiting_state.state if waiting_state else None)
-    setattr(email, "wait_days", waiting_state.wait_days if waiting_state else None)
     annotate_spam_review_metadata(db, [email])
+    _attach_attachment_counts(db, [email])
+    return email
+
+
+@router.post("/{email_id}/reply-later", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
+def move_email_reply_later(
+    email_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("update_status")),
+) -> Email:
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    if mailbox_config is None:
+        raise HTTPException(status_code=400, detail="Mailbox configuration is not available")
+
+    try:
+        reply_later_email_via_imap(db, email, mailbox_config)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"IMAP reply-later move failed: {exc}") from exc
+
+    db.add(
+        ActionLog(
+            user_id=current_user.id,
+            email_id=email.id,
+            action_type="status_updated:reply_later",
+            actor=current_user.email,
+            details_json=json.dumps({"status": "reply_later"}, ensure_ascii=False),
+        )
+    )
+    db.commit()
+    db.refresh(email)
     _attach_attachment_counts(db, [email])
     return email
 
@@ -553,101 +604,6 @@ def download_attachment(
         media_type=media_type,
         headers=headers,
     )
-
-
-@router.post("/{email_id}/waiting/start", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
-def start_waiting(
-    email_id: int,
-    request: WaitingStartRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("assign_items")),
-) -> Email:
-    email = db.query(Email).filter(Email.id == email_id).first()
-    if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
-
-    mark_thread_waiting(
-        db_session=db,
-        thread_id=email.thread_id or email.message_id or f"email-{email.id}",
-        started_at=datetime.now(timezone.utc),
-        expected_reply_by=request.expected_reply_by,
-        email_id=email.id,
-        actor=current_user.email,
-    )
-    db.commit()
-    db.refresh(email)
-    waiting_state = get_thread_waiting_state(db, email.thread_id or email.message_id or "")
-    setattr(email, "waiting_state", waiting_state.state if waiting_state else None)
-    setattr(email, "wait_days", waiting_state.wait_days if waiting_state else None)
-    return email
-
-
-@router.post("/{email_id}/waiting/close", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
-def stop_waiting(
-    email_id: int,
-    request: WaitingCloseRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("assign_items")),
-) -> Email:
-    email = db.query(Email).filter(Email.id == email_id).first()
-    if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
-
-    close_waiting(
-        db_session=db,
-        thread_id=email.thread_id or email.message_id or f"email-{email.id}",
-        reason=request.reason or "closed_by_user",
-        actor=current_user.email,
-    )
-    db.commit()
-    db.refresh(email)
-    setattr(email, "waiting_state", None)
-    setattr(email, "wait_days", None)
-    return email
-
-
-@router.post("/{email_id}/followup-draft", response_model=FollowupDraftResponse, responses={404: {"model": ErrorResponse}})
-def create_followup_draft(
-    email_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("send_email")),
-) -> FollowupDraftResponse:
-    email = db.query(Email).filter(Email.id == email_id).first()
-    if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
-
-    thread_key = email.thread_id or email.message_id or f"email-{email.id}"
-    waiting_state = get_thread_waiting_state(db, thread_key)
-    if waiting_state is None:
-        raise HTTPException(status_code=400, detail="Thread is not currently waiting for reply")
-
-    thread_history = (
-        db.query(Email)
-        .filter(or_(Email.thread_id == thread_key, Email.message_id == thread_key))
-        .order_by(Email.date_received.desc().nullslast(), Email.id.desc())
-        .limit(5)
-        .all()
-    )
-    preference_block = build_preference_prompt_block(get_preference_profile(db))
-    draft = generate_followup_draft(email, thread_history, waiting_state.wait_days, get_effective_settings(), preference_block=preference_block)
-    task = db.query(Task).filter(Task.id == waiting_state.task_id).first()
-    if task is not None:
-        task.followup_draft = draft
-        db.add(task)
-    db.add(
-        ActionLog(
-            user_id=current_user.id,
-            email_id=email.id,
-            task_id=waiting_state.task_id,
-            action_type="followup_generated",
-            actor=current_user.email,
-            details_json=json.dumps({"thread_id": thread_key}, ensure_ascii=False),
-        )
-    )
-    db.commit()
-    return FollowupDraftResponse(thread_id=thread_key, draft_reply=draft)
-
-
 @router.post("/{email_id}/set-reply-language", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def set_reply_language(
     email_id: int,
@@ -704,16 +660,29 @@ def create_ai_draft(
         .all()
     )
     preference_block = build_preference_prompt_block(get_preference_profile(db))
-    result = generate_personalized_draft(
-        email_record=email,
-        thread_history=thread_history,
-        config=get_effective_settings(),
-        target_language=request.target_language,
-        template_id=request.template_id,
-        tone=request.tone,
-        length=request.length,
-        preference_block=preference_block,
-    )
+    try:
+        result = generate_personalized_draft(
+            email_record=email,
+            thread_history=thread_history,
+            config=get_effective_settings(),
+            target_language=request.target_language,
+            template_id=request.template_id,
+            tone=request.tone,
+            length=request.length,
+            custom_prompt=request.custom_prompt,
+            preference_block=preference_block,
+        )
+    except DeepSeekTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=f"AI draft timed out: {exc}") from exc
+    except DeepSeekRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=f"AI rate limit reached: {exc}") from exc
+    except (DeepSeekResponseError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Unexpected AI response: {exc}") from exc
+    except DeepSeekError as exc:
+        raise HTTPException(status_code=502, detail=f"AI draft generation failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected AI draft failure for email_id=%s", email_id)
+        raise HTTPException(status_code=500, detail=f"Unexpected AI draft failure: {exc}") from exc
     email.ai_draft_reply = result.draft_reply
     email.preferred_reply_language = result.target_language
     db.add(email)
@@ -723,6 +692,7 @@ def create_ai_draft(
         "template_id": request.template_id,
         "tone": request.tone,
         "length": request.length,
+        "custom_prompt_used": bool(request.custom_prompt),
     }
     if request.template_id and get_template(request.template_id):
         db.add(
@@ -764,14 +734,35 @@ def rewrite_existing_draft(
         raise HTTPException(status_code=404, detail="Email not found")
 
     preference_block = build_preference_prompt_block(get_preference_profile(db))
-    result = rewrite_draft(
-        email_record=email,
-        current_draft=request.current_draft,
-        instruction=request.instruction,
-        config=get_effective_settings(),
-        target_language=request.target_language,
-        preference_block=preference_block,
+    thread_key = email.thread_id or email.message_id or f"email-{email.id}"
+    thread_history = (
+        db.query(Email)
+        .filter(or_(Email.thread_id == thread_key, Email.message_id == thread_key))
+        .order_by(Email.date_received.desc().nullslast(), Email.id.desc())
+        .limit(5)
+        .all()
     )
+    try:
+        result = rewrite_draft(
+            email_record=email,
+            current_draft=request.current_draft,
+            instruction=request.instruction,
+            config=get_effective_settings(),
+            thread_history=thread_history,
+            target_language=request.target_language,
+            preference_block=preference_block,
+        )
+    except DeepSeekTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=f"AI rewrite timed out: {exc}") from exc
+    except DeepSeekRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=f"AI rate limit reached: {exc}") from exc
+    except (DeepSeekResponseError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Unexpected AI response: {exc}") from exc
+    except DeepSeekError as exc:
+        raise HTTPException(status_code=502, detail=f"AI rewrite failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected AI rewrite failure for email_id=%s", email_id)
+        raise HTTPException(status_code=500, detail=f"Unexpected AI rewrite failure: {exc}") from exc
     previous_draft = email.ai_draft_reply
     email.ai_draft_reply = result.draft_reply
     email.preferred_reply_language = result.target_language
@@ -859,96 +850,6 @@ def submit_draft_feedback(
     db.commit()
     rebuild_preference_profile(db)
     return FeedbackResponse(status="ok", action_types=[result.action_type], inferred_tags=result.inferred_tags)
-
-
-@router.post("/{email_id}/assign", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
-def assign_email(
-    email_id: int,
-    request: EmailAssignRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("assign_items")),
-) -> Email:
-    email = db.query(Email).filter(Email.id == email_id).first()
-    if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
-    target_user = db.query(User).filter(User.id == request.user_id, User.is_active.is_(True)).first()
-    if target_user is None:
-        raise HTTPException(status_code=404, detail="Target user not found")
-
-    email.assigned_to_user_id = target_user.id
-    email.assigned_by_user_id = current_user.id
-    email.assigned_at = datetime.now(timezone.utc)
-    db.add(email)
-
-    thread_key = email.thread_id or email.message_id
-    if thread_key:
-        tasks = db.query(Task).filter(Task.thread_id == thread_key).all()
-        for task in tasks:
-            task.assigned_to_user_id = target_user.id
-            task.assigned_by_user_id = current_user.id
-            task.assigned_at = datetime.now(timezone.utc)
-            task.assigned_to = target_user.email
-            db.add(task)
-
-    db.add(
-        ActionLog(
-            user_id=current_user.id,
-            email_id=email.id,
-            action_type="email_assigned",
-            actor=current_user.email,
-            details_json=json.dumps(
-                {
-                    "assigned_to_user_id": target_user.id,
-                    "assigned_to_email": target_user.email,
-                },
-                ensure_ascii=False,
-            ),
-        )
-    )
-    db.commit()
-    db.refresh(email)
-    _attach_attachment_counts(db, [email])
-    return email
-
-
-@router.post("/{email_id}/unassign", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
-def unassign_email(
-    email_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("assign_items")),
-) -> Email:
-    email = db.query(Email).filter(Email.id == email_id).first()
-    if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
-
-    email.assigned_to_user_id = None
-    email.assigned_by_user_id = current_user.id
-    email.assigned_at = datetime.now(timezone.utc)
-    db.add(email)
-
-    thread_key = email.thread_id or email.message_id
-    if thread_key:
-        tasks = db.query(Task).filter(Task.thread_id == thread_key).all()
-        for task in tasks:
-            task.assigned_to_user_id = None
-            task.assigned_by_user_id = current_user.id
-            task.assigned_at = datetime.now(timezone.utc)
-            task.assigned_to = None
-            db.add(task)
-
-    db.add(
-        ActionLog(
-            user_id=current_user.id,
-            email_id=email.id,
-            action_type="email_unassigned",
-            actor=current_user.email,
-            details_json=json.dumps({}, ensure_ascii=False),
-        )
-    )
-    db.commit()
-    db.refresh(email)
-    _attach_attachment_counts(db, [email])
-    return email
 
 
 def _build_reply_subject(subject: str | None) -> str:

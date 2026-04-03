@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import make_msgid
 
+from app.services.imap_mailbox_actions import append_sent_copy_to_imap
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,15 @@ def send_reply(
 
     try:
         _deliver_message(message, recipients, config)
+        try:
+            append_sent_copy_to_imap(config, message, folder_kind="sent")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SMTP send succeeded but IMAP sent-copy append failed: host=%s subject=%s error=%s",
+                getattr(config, "smtp_host", None),
+                subject,
+                exc,
+            )
     except (smtplib.SMTPException, OSError, RuntimeError) as exc:
         logger.exception(
             "SMTP reply send failed: host=%s to=%s cc=%s bcc_count=%s subject=%s",
@@ -141,6 +152,15 @@ def send_email(
     message.set_content(body)
     try:
         _deliver_message(message, recipients, config)
+        try:
+            append_sent_copy_to_imap(config, message, folder_kind="sent")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "SMTP send succeeded but IMAP sent-copy append failed: host=%s subject=%s error=%s",
+                getattr(config, "smtp_host", None),
+                subject,
+                exc,
+            )
     except (smtplib.SMTPException, OSError, RuntimeError) as exc:
         logger.exception(
             "SMTP email send failed: host=%s to=%s cc=%s bcc_count=%s subject=%s",

@@ -146,6 +146,7 @@ class EmailGenerateDraftRequest(BaseModel):
     template_id: str | None = None
     tone: str | None = None
     length: str | None = None
+    custom_prompt: str | None = None
 
 
 class EmailRewriteDraftRequest(BaseModel):
