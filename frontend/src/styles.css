@@ -396,6 +396,16 @@ textarea {
   flex: 1 1 auto;
 }
 
+.panel-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.panel-copy p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .mail-layout {
   display: grid;
   grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 1fr);
@@ -1066,6 +1076,8 @@ textarea {
   padding: 0.42rem 0.75rem;
   font-size: 0.84rem;
   border: 1px solid transparent;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .badge-neutral {
