@@ -14,7 +14,7 @@ from app.api.routes.settings import router as settings_router
 from app.api.routes.stats import router as stats_router
 from app.config import settings
 from app.core.logging import configure_logging
-from app.db import create_tables, reset_current_mailbox_id, set_current_mailbox_id
+from app.db import create_tables, reset_current_mailbox_id, resolve_mailbox_id_from_request, set_current_mailbox_id
 from app.scheduler import start_scheduler, stop_scheduler
 from app.services.mail_watcher import start_mail_watchers, stop_mail_watchers
 from app.services.user_service import ensure_default_admin
@@ -44,8 +44,7 @@ app = FastAPI(
 
 @app.middleware("http")
 async def mailbox_context_middleware(request: Request, call_next):
-    mailbox_id = request.query_params.get("mailbox_id") or request.headers.get("X-Mailbox-Id") or "default"
-    token = set_current_mailbox_id(mailbox_id)
+    token = set_current_mailbox_id(resolve_mailbox_id_from_request(request))
     try:
         response = await call_next(request)
         return response

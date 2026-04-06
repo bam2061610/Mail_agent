@@ -183,6 +183,29 @@ it("shows a visible error when login fails", async () => {
   expect(localStorage.getItem("oma_token")).toBeNull();
 });
 
+it("returns to login when auth bootstrap rejects an expired token and can recover with a fresh login", async () => {
+  localStorage.setItem("oma_token", "expired-token");
+  installFetchMock({
+    "GET /api/auth/me": { status: 401, body: { detail: "Invalid or expired token" } },
+    "POST /api/auth/refresh": { status: 401, body: { detail: "Invalid or expired token" } },
+    "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
+    ...authenticatedRoutes(adminUser),
+  });
+
+  const user = userEvent.setup();
+  render(<App />);
+
+  expect(await screen.findByText("Mail login")).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Session expired. Please sign in again.");
+  expect(localStorage.getItem("oma_token")).toBeNull();
+
+  await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
+  await user.type(screen.getByLabelText("Password"), "admin123");
+  await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+  expect(await screen.findByText("Supplier quotation request")).toBeInTheDocument();
+});
+
 it("switches between inbox and settings and toggles language", async () => {
   installFetchMock({
     "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },

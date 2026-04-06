@@ -7,6 +7,16 @@ export const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_UR
 
 let refreshTokenPromise: Promise<string | null> | null = null;
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 export function normalizeApiBaseUrl(rawValue: string | undefined): string {
   const value = (rawValue || "").trim();
   return value ? value.replace(/\/+$/, "") : "";
@@ -73,7 +83,7 @@ export async function requestJson<T>(url: string, init: RequestInit): Promise<T>
 
 export async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(await extractErrorDetail(response));
+    throw new ApiError(response.status, await extractErrorDetail(response));
   }
   return (await response.json()) as T;
 }

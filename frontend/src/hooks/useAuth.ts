@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
-import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, saveStoredAuthToken } from "../api";
+import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, ApiError, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, saveStoredAuthToken } from "../api";
 import { initialLoginForm, type AuthLoginResponse, type AuthMeResponse, type LoginFormState, type UserItem } from "../types";
 
 type UseAuthResult = {
@@ -31,15 +31,21 @@ export function useAuth(): UseAuthResult {
     try {
       if (!authToken) {
         setCurrentUser(null);
+        setAuthError("");
         return;
       }
       const me = await apiGet<AuthMeResponse>("/api/auth/me");
       setCurrentUser(me.user);
+      setAuthError("");
     } catch (error) {
-      clearStoredAuthToken();
-      setAuthToken("");
+      if (error instanceof ApiError && error.status === 401) {
+        clearStoredAuthToken();
+        setAuthToken("");
+        setAuthError("Session expired. Please sign in again.");
+      } else {
+        setAuthError(getErrorMessage(error, "Unable to verify your session. Please sign in again."));
+      }
       setCurrentUser(null);
-      setAuthError(getErrorMessage(error, "Session expired. Please sign in again."));
     } finally {
       setAuthLoading(false);
     }

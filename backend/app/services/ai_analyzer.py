@@ -419,7 +419,12 @@ def generate_personalized_draft(
     template = get_template(template_id) if template_id else None
     system_prompt = (
         "You are an email assistant for Orhun Medical in Kazakhstan. "
-        "Generate a professional business email draft in the requested target language. "
+        "Your task is to compose a REPLY email on behalf of Orhun Medical. "
+        "IMPORTANT: The user (Orhun Medical) is the RECIPIENT of the incoming email. "
+        "You are drafting a response FROM Orhun Medical TO the original sender. "
+        "Address the reply to the sender by name when available. "
+        "Do NOT write as if Orhun Medical is the one who sent the original message. "
+        "Generate the reply in the requested target language. "
         "If a template is provided, preserve its intention and structure while personalizing it to the thread. "
         "If custom instructions are provided, follow them unless they conflict with policy or the thread. "
         "Always return JSON only."
@@ -429,6 +434,13 @@ def generate_personalized_draft(
 
     payload = {
         "task": "generate_personalized_draft",
+        "reply_context": {
+            "our_company": "Orhun Medical",
+            "our_role": "recipient_of_incoming_email",
+            "reply_to_name": email_record.sender_name or email_record.sender_email or "colleague",
+            "reply_to_email": email_record.sender_email,
+            "action": "compose_reply_to_sender",
+        },
         "target_language": language,
         "tone": tone or "professional",
         "length": length or "medium",
@@ -483,7 +495,8 @@ def rewrite_draft(
     language = choose_reply_language(email_record, explicit_language=target_language, thread_history=thread_history)
     system_prompt = (
         "You are an email assistant for Orhun Medical in Kazakhstan. "
-        "Rewrite the provided draft according to the user instruction. "
+        "Rewrite the provided reply draft according to the user instruction. "
+        "This draft is a REPLY from Orhun Medical to an external sender. "
         "Keep the business intent intact, preserve important facts, and return JSON only."
     )
     if preference_block:

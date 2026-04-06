@@ -13,6 +13,30 @@ def test_auth_login_and_me(client, admin_user):
     assert me.json()["user"]["email"] == admin_user.email
 
 
+def test_auth_me_rejects_invalid_token_without_teardown_crash(client):
+    response = client.get("/api/auth/me", headers={"Authorization": "Bearer expired-token"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid or expired token"
+
+
+def test_mailbox_context_request_lifecycle_survives_context_reset(client, admin_user):
+    mailbox_headers = {"X-Mailbox-Id": "mailbox-a"}
+    login = client.post(
+        "/api/auth/login",
+        json={"email": admin_user.email, "password": "admin123"},
+        headers=mailbox_headers,
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+
+    me = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}", **mailbox_headers},
+    )
+    assert me.status_code == 200
+    assert me.json()["user"]["email"] == admin_user.email
+
+
 def test_auth_rejects_bad_credentials(client, admin_user):
     response = client.post("/api/auth/login", json={"email": admin_user.email, "password": "wrong"})
     assert response.status_code == 401

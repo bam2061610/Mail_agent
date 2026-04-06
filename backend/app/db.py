@@ -273,13 +273,11 @@ def open_account_session(mailbox_id: str | None = None):
 
 def get_db(request: Request) -> Generator:
     mailbox_id = resolve_mailbox_id_from_request(request)
-    token = set_current_mailbox_id(mailbox_id)
     db = open_account_session(mailbox_id)
     try:
         yield db
     finally:
         db.close()
-        reset_current_mailbox_id(token)
 
 
 def _account_database_path(mailbox_id: str) -> Path:
