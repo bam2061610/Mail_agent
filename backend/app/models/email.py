@@ -27,6 +27,7 @@ class Email(Base):
     direction: Mapped[str] = mapped_column(String(50), default="inbound", nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="new", nullable=False)
     priority: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    importance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     action_description: Mapped[str | None] = mapped_column(Text, nullable=True)

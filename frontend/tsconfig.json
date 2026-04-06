@@ -11,6 +11,10 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Node",
+    "baseUrl": ".",
+    "paths": {
+      "lucide-react": ["./src/vendor/lucide-react"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

@@ -50,6 +50,10 @@
   "queue": {
     "searchPlaceholder": "Search sender, subject, summary, attachment name",
     "needsReply": "Needs reply",
+    "filterAll": "All",
+    "filterImportant": "Important (7+)",
+    "filtersLabel": "Email filters",
+    "aiLabel": "AI",
     "focusSenders": "Focus senders",
     "waiting": "Waiting",
     "allActive": "All active",
@@ -129,6 +133,7 @@
     "summaryOff": "Summary off",
     "draftHelpful": "Draft helpful",
     "draftNeedsWork": "Draft needs work",
+    "importance": "Importance",
     "summaryHeading": "Summary",
     "originalMessage": "Original message",
     "replyTitle": "Reply preview",

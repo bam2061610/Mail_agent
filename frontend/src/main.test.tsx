@@ -74,6 +74,7 @@ function authenticatedRoutes(user = adminUser): Record<string, RouteResponse> {
     sender_name: "Supplier Sales",
     status: "new",
     priority: "high",
+    importance_score: 9,
     category: "RFQ",
     ai_analyzed: true,
     requires_reply: true,
@@ -131,10 +132,13 @@ it("logs in and renders the minimal inbox UI", async () => {
   await user.click(screen.getByRole("button", { name: /sign in/i }));
 
   expect(await screen.findByText("Supplier quotation request")).toBeInTheDocument();
+  expect(screen.getByText("Needs reply")).toBeInTheDocument();
+  expect(screen.getByLabelText("Importance: 9/10")).toBeInTheDocument();
   await user.click(screen.getByText("Supplier quotation request"));
   const dialog = await screen.findByRole("dialog", { name: "Read message" });
   expect(dialog).toBeInTheDocument();
   expect(within(dialog).getByText("Summary")).toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Importance: 9/10")).toBeInTheDocument();
   expect(within(dialog).getByText("Original message")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

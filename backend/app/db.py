@@ -90,6 +90,7 @@ def _ensure_email_columns(target_engine) -> None:
         "action_description": "TEXT",
         "key_dates_json": "TEXT",
         "key_amounts_json": "TEXT",
+        "importance_score": "INTEGER DEFAULT NULL",
         "ai_analyzed": "BOOLEAN NOT NULL DEFAULT 0",
         "ai_confidence": "FLOAT",
         "last_reply_sent_at": "DATETIME",

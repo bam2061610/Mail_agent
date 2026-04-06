@@ -17,6 +17,7 @@ class EmailListItem(BaseModel):
     date_received: datetime | None = None
     status: str
     priority: str | None = None
+    importance_score: int | None = None
     category: str | None = None
     ai_analyzed: bool
     requires_reply: bool
@@ -25,6 +26,8 @@ class EmailListItem(BaseModel):
     spam_reason: str | None = None
     applied_rules_json: str | None = None
     focus_flag: bool = False
+    ai_summary: str | None = None
+    body_text: str | None = None
     spam_action_at: datetime | None = None
     spam_action_actor: str | None = None
     detected_source_language: str | None = None
@@ -50,11 +53,9 @@ class EmailDetail(EmailListItem):
     thread_id: str | None = None
     recipients_json: str | None = None
     cc_json: str | None = None
-    body_text: str | None = None
     body_html: str | None = None
     folder: str
     direction: str
-    ai_summary: str | None = None
     action_description: str | None = None
     key_dates_json: str | None = None
     key_amounts_json: str | None = None

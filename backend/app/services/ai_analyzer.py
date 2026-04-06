@@ -36,6 +36,7 @@ class AnalysisResult(BaseModel):
     core_request: str | None = None
     required_action: str | None = None
     priority: str = "medium"
+    importance_score: int | None = None
     category: str = "Other"
     action_required: bool = False
     action_description: str | None = None
@@ -50,6 +51,19 @@ class AnalysisResult(BaseModel):
         if isinstance(value, str) and value.lower() in VALID_PRIORITIES:
             return value.lower()
         return "medium"
+
+    @field_validator("importance_score", mode="before")
+    @classmethod
+    def validate_importance_score(cls, value: object) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            score = int(value)
+        except (TypeError, ValueError):
+            return None
+        if 1 <= score <= 10:
+            return score
+        return None
 
     @field_validator("category", mode="before")
     @classmethod
@@ -176,7 +190,13 @@ def build_system_prompt(config, preference_block: str | None = None) -> str:
         "and English. Always respond in JSON format only, no markdown, no preamble. "
         f"Write the summary and draft reply in {language_name}. "
         "The summary must clearly cover who is writing, to whom, the core request or offer, "
-        "and what action is required."
+        "and what action is required. "
+        "Rate this email's importance from 1 to 10: "
+        "10 = urgent action required (contract, payment, deadline today); "
+        "7-9 = important, needs reply within 24h; "
+        "4-6 = normal business correspondence; "
+        "1-3 = informational, no action needed (newsletters, notifications). "
+        'Return the score as JSON field "importance_score".'
     )
     if preference_block:
         return f"{base_prompt}\n\n{preference_block}"
@@ -216,6 +236,7 @@ def build_user_payload(email_record: Email, thread_history: list[Email], *, inte
             "core_request": "core request or offer",
             "required_action": "what action is required",
             "priority": "critical|high|medium|low|spam",
+            "importance_score": "integer 1-10 or null",
             "category": "RFQ|Invoice|Logistics|Support|Spam|Other",
             "action_required": True,
             "action_description": "what needs to be done",
@@ -361,6 +382,7 @@ def save_analysis_result(db_session: Session, email_record: Email, analysis_resu
     update_email_languages(email_record, contact=contact)
     _save_thread_summary(db_session, email_record, analysis_result.summary)
     email_record.priority = analysis_result.priority
+    email_record.importance_score = analysis_result.importance_score
     email_record.category = analysis_result.category
     email_record.requires_reply = analysis_result.action_required
     email_record.action_description = analysis_result.action_description

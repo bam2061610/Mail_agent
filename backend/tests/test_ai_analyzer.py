@@ -26,6 +26,7 @@ def test_analyze_email_parses_structured_response(monkeypatch):
         "core_request": "share quote details",
         "required_action": "reply with pricing window",
         "priority": "high",
+        "importance_score": 9,
         "category": "RFQ",
         "action_required": True,
         "action_description": "Reply with pricing window.",
@@ -37,6 +38,7 @@ def test_analyze_email_parses_structured_response(monkeypatch):
     email = Email(id=1, subject="RFQ", sender_email="sales@supplier.com", body_text="Need quote", recipients_json="[]", cc_json="[]")
     result = ai_analyzer.analyze_email(email, [], _cfg())
     assert result.priority == "high"
+    assert result.importance_score == 9
     assert result.category == "RFQ"
     assert result.action_required is True
 
@@ -79,6 +81,7 @@ def test_save_analysis_result_propagates_thread_summary(db_session):
             core_request="quote request",
             required_action="reply with pricing",
             priority="medium",
+            importance_score=8,
             category="RFQ",
             action_required=True,
         ),
@@ -88,6 +91,7 @@ def test_save_analysis_result_propagates_thread_summary(db_session):
     db_session.refresh(current)
     db_session.refresh(followup)
     assert current.ai_summary == followup.ai_summary
+    assert current.importance_score == 8
     assert "Orhun Medical" in current.ai_summary
 
 
@@ -219,6 +223,7 @@ def test_analyze_pending_updates_only_unanalyzed(db_session, monkeypatch):
             {
                 "summary": "Summary",
                 "priority": "medium",
+                "importance_score": 5,
                 "category": "Support",
                 "action_required": False,
                 "action_description": "",
@@ -234,4 +239,5 @@ def test_analyze_pending_updates_only_unanalyzed(db_session, monkeypatch):
     db_session.refresh(e1)
     db_session.refresh(e2)
     assert e1.ai_analyzed is True
+    assert e1.importance_score == 5
     assert e2.ai_analyzed is True

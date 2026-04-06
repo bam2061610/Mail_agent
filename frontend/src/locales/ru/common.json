@@ -50,6 +50,10 @@
   "queue": {
     "searchPlaceholder": "Поиск по отправителю, теме, сводке, вложению",
     "needsReply": "Нужен ответ",
+    "filterAll": "Все",
+    "filterImportant": "Важные (7+)",
+    "filtersLabel": "Фильтры писем",
+    "aiLabel": "AI",
     "focusSenders": "Фокус-отправители",
     "waiting": "Ожидание",
     "allActive": "Все активные",
@@ -129,6 +133,7 @@
     "summaryOff": "Сводка неточна",
     "draftHelpful": "Черновик полезен",
     "draftNeedsWork": "Черновик нужно доработать",
+    "importance": "Важность",
     "summaryHeading": "Сводка",
     "originalMessage": "Оригинал письма",
     "replyTitle": "Ответ",

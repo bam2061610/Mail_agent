@@ -16,7 +16,9 @@ def test_health_and_email_list(client, admin_auth_headers, sample_email):
     listing = client.get("/api/emails", headers=admin_auth_headers)
     assert listing.status_code == 200
     items = listing.json()
-    assert any(item["id"] == sample_email.id for item in items)
+    matched = next(item for item in items if item["id"] == sample_email.id)
+    assert matched["ai_summary"] == sample_email.ai_summary
+    assert matched["importance_score"] == sample_email.importance_score
 
 
 def test_get_email_detail(client, admin_auth_headers, sample_email):

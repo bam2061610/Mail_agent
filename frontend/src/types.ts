@@ -13,6 +13,7 @@ export type EmailItem = {
   date_received?: string | null;
   status: string;
   priority?: string | null;
+  importance_score?: number | null;
   category?: string | null;
   ai_analyzed: boolean;
   requires_reply: boolean;
