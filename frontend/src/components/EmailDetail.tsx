@@ -68,7 +68,24 @@ export function EmailDetail(props: EmailDetailProps) {
 
   return (
     <section className="detail-panel email-detail-panel" aria-label={props.mode === "reply" ? t("detail.replyTitle") : t("detail.readTitle")}>
-      {!props.open || !selected ? (
+      {!props.open ? (
+        <div className="detail-empty">
+          <div className="empty-state">
+            <strong>{t("detail.selectItem")}</strong>
+            <p>{t("detail.selectItemDesc")}</p>
+          </div>
+        </div>
+      ) : props.loading ? (
+        <div className="modal-body modal-skeleton">
+          <div className="skeleton skeleton-line skeleton-line-title" />
+          <div className="skeleton skeleton-line skeleton-line-summary" />
+          <div className="skeleton-stack">
+            <div className="skeleton skeleton-panel" />
+            <div className="skeleton skeleton-panel" />
+            <div className="skeleton skeleton-panel" />
+          </div>
+        </div>
+      ) : !selected ? (
         <div className="detail-empty">
           <div className="empty-state">
             <strong>{t("detail.selectItem")}</strong>
