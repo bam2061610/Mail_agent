@@ -64,6 +64,7 @@ export function App() {
   const [replyPrompt, setReplyPrompt] = useState("");
   const [replySignature, setReplySignature] = useState("");
   const [settingsSignature, setSettingsSignature] = useState("");
+  const [savingSignature, setSavingSignature] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [mailActionLoading, setMailActionLoading] = useState<string | null>(null);
@@ -101,6 +102,7 @@ export function App() {
       setReplyPrompt("");
       setReplySignature("");
       setSettingsSignature("");
+      setSavingSignature(false);
       setModalMode(null);
     }
   }, [currentUser]);
@@ -408,6 +410,22 @@ export function App() {
     }
   }
 
+  async function saveSignature() {
+    setAppError("");
+    setAppSuccess("");
+    setSavingSignature(true);
+    try {
+      await apiPost("/api/settings", {
+        signature: settingsSignature,
+      });
+      setAppSuccess(t("settings.signatureSaved"));
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not save signature."));
+    } finally {
+      setSavingSignature(false);
+    }
+  }
+
   const shellClass = `app-shell${mobileSidebarOpen ? " sidebar-open" : ""}`;
 
   if (authLoading) {
@@ -476,6 +494,10 @@ export function App() {
               void i18n.changeLanguage(language);
               setAppSuccess(language === "ru" ? "Язык изменен." : language === "tr" ? "Dil güncellendi." : "Language updated.");
             }}
+            signature={settingsSignature}
+            onSignatureChange={setSettingsSignature}
+            onSaveSignature={() => void saveSignature()}
+            savingSignature={savingSignature}
             onLogout={() => void handleLogout()}
             actionLoading={actionLoading}
           />

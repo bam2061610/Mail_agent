@@ -7,6 +7,10 @@ type SettingsPanelProps = {
   currentUser: UserItem | null;
   language: string;
   onLanguageChange: (language: "ru" | "en" | "tr") => void;
+  signature: string;
+  onSignatureChange: (value: string) => void;
+  onSaveSignature: () => void;
+  savingSignature: boolean;
   onLogout: () => void;
   actionLoading: string | null;
 };
@@ -42,6 +46,28 @@ export function SettingsPanel(props: SettingsPanelProps) {
             onClick={() => props.onLanguageChange("tr")}
           >
             TR
+          </button>
+        </div>
+      </div>
+      <div className="settings-card settings-signature-card">
+        <div className="panel-copy">
+          <h3>{t("settings.signature")}</h3>
+          <p>{t("detail.signatureHint")}</p>
+        </div>
+        <div className="settings-signature-form">
+          <textarea
+            rows={5}
+            value={props.signature}
+            onChange={(event) => props.onSignatureChange(event.target.value)}
+            placeholder={t("detail.signaturePlaceholder")}
+          />
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={props.onSaveSignature}
+            disabled={props.savingSignature}
+          >
+            {t("settings.saveSignature")}
           </button>
         </div>
       </div>

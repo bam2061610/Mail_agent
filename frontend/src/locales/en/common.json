@@ -164,7 +164,10 @@
   "settings": {
     "language": "Language",
     "english": "English",
-    "russian": "Русский"
+    "russian": "Русский",
+    "signature": "Signature",
+    "saveSignature": "Save signature",
+    "signatureSaved": "Signature saved"
   },
   "focus": {
     "loadHint": "Load the queue to see the current operating picture.",
