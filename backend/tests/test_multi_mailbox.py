@@ -53,6 +53,8 @@ def test_multi_mailbox_create_and_select_outgoing(db_session):
 
 
 def test_imap_scanner_with_mocked_imap(db_session, monkeypatch):
+    from datetime import datetime, timezone
+
     class FakeIMAP:
         def __init__(self, *_args, **_kwargs):
             pass
@@ -73,12 +75,12 @@ def test_imap_scanner_with_mocked_imap(db_session, monkeypatch):
             return (
                 "OK",
                 [
-                    (
-                        b"body",
-                        b"Message-ID: <imap-test@test>\r\nSubject: IMAP mocked\r\nFrom: ext@example.com\r\nTo: a@example.com\r\nDate: Tue, 01 Apr 2026 10:00:00 +0000\r\n\r\nBody",
-                    )
-                ],
-            )
+                        (
+                            b"body",
+                            b"Message-ID: <imap-test@test>\r\nSubject: IMAP mocked\r\nFrom: ext@example.com\r\nTo: a@example.com\r\nDate: Thu, 02 Apr 2026 10:00:00 +0000\r\n\r\nBody",
+                        )
+                    ],
+                )
 
         def close(self):
             return "OK", []
@@ -88,6 +90,14 @@ def test_imap_scanner_with_mocked_imap(db_session, monkeypatch):
 
     import app.services.imap_scanner as scanner
 
+    fixed_now = datetime(2026, 4, 2, 12, 0, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now
+
+    monkeypatch.setattr(scanner, "datetime", FrozenDatetime)
     monkeypatch.setattr(scanner.imaplib, "IMAP4_SSL", FakeIMAP)
     settings = type(
         "S",
@@ -97,10 +107,10 @@ def test_imap_scanner_with_mocked_imap(db_session, monkeypatch):
             "imap_port": 993,
             "imap_user": "u",
             "imap_password": "p",
-            "id": "mb-1",
-            "name": "Mailbox 1",
-            "email_address": "mb1@example.com",
-        },
+                "id": "mb-1",
+                "name": "Mailbox 1",
+                "email_address": "mb1@example.com",
+            },
     )()
     summary = scan_inbox(db_session, settings)
     assert summary.created_count == 1

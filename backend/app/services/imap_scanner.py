@@ -84,7 +84,7 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
     return connection
 
 
-MAX_INITIAL_SCAN_DAYS = 10
+MAX_INITIAL_SCAN_DAYS = 1
 
 
 def _imap_date_criterion(days_back: int = MAX_INITIAL_SCAN_DAYS) -> str:

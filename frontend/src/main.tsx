@@ -235,6 +235,14 @@ export function App() {
     void loadEmails();
   }, [loadEmails]);
 
+  useEffect(() => {
+    if (!currentUser || view === "settings") return;
+    const interval = window.setInterval(() => {
+      void loadEmails();
+    }, 300000);
+    return () => window.clearInterval(interval);
+  }, [currentUser, loadEmails, view]);
+
   const handleViewChange = useCallback(
     (nextView: MailView) => {
       setView(nextView);
@@ -442,6 +450,11 @@ export function App() {
             </div>
           </div>
           <div className="topbar-actions">
+            {view !== "settings" ? (
+              <button className="button button-ghost" type="button" onClick={() => void loadEmails()} disabled={loadingList}>
+                ↻
+              </button>
+            ) : null}
             <div className="user-chip">{currentUser.full_name || currentUser.email}</div>
             <button className="button button-ghost" type="button" onClick={() => void handleLogout()} disabled={actionLoading === "auth-logout"}>
               {actionLoading === "auth-logout" ? t("app.signingOut") : t("app.logout")}

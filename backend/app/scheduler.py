@@ -2,6 +2,7 @@ import logging
 import os
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -218,6 +219,7 @@ def create_scheduler(config) -> BackgroundScheduler:
         run_scan_and_analyze,
         trigger="interval",
         minutes=max(1, int(config.scan_interval_minutes)),
+        next_run_time=datetime.now(),
         id=SCHEDULER_JOB_ID,
         replace_existing=True,
     )

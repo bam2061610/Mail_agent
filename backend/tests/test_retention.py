@@ -8,7 +8,7 @@ from app.services.imap_scanner import _imap_date_criterion, _is_older_than_cutof
 from app.services.retention_service import cleanup_email_retention
 
 
-def test_imap_scan_window_uses_last_ten_days(monkeypatch):
+def test_imap_scan_window_uses_last_day(monkeypatch):
     fixed_now = datetime(2026, 4, 2, 12, 0, tzinfo=timezone.utc)
 
     class FrozenDatetime(datetime):
@@ -20,11 +20,11 @@ def test_imap_scan_window_uses_last_ten_days(monkeypatch):
 
     monkeypatch.setattr(imap_scanner, "datetime", FrozenDatetime)
 
-    assert _imap_date_criterion() == "SINCE 23-Mar-2026"
+    assert _imap_date_criterion() == "SINCE 01-Apr-2026"
 
 
 def test_scan_window_boundary_helper_is_strict():
-    cutoff = datetime(2026, 4, 2, 12, 0, tzinfo=timezone.utc) - timedelta(days=10)
+    cutoff = datetime(2026, 4, 2, 12, 0, tzinfo=timezone.utc) - timedelta(days=1)
     exact = cutoff
     newer = cutoff + timedelta(seconds=1)
     older = cutoff - timedelta(seconds=1)
@@ -41,7 +41,7 @@ def test_retention_cleanup_prunes_old_content_and_keeps_exact_boundary(db_sessio
     exact_email = Email(
         message_id="<exact@test>",
         thread_id="<exact@test>",
-        subject="Exactly ten days old",
+        subject="Exactly one day old",
         sender_email="sender@example.com",
         sender_name="Sender",
         recipients_json='[{"email":"recipient@example.com","name":"Recipient"}]',
@@ -59,7 +59,7 @@ def test_retention_cleanup_prunes_old_content_and_keeps_exact_boundary(db_sessio
     old_email = Email(
         message_id="<old@test>",
         thread_id="<old@test>",
-        subject="Older than ten days",
+        subject="Older than one day",
         sender_email="sender@example.com",
         sender_name="Sender",
         recipients_json='[{"email":"recipient@example.com","name":"Recipient"}]',
