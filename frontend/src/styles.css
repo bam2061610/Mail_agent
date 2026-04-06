@@ -985,6 +985,12 @@ textarea {
   display: none;
 }
 
+.detail-close {
+  font-size: 1.3rem;
+  line-height: 1;
+  padding-inline: 0.75rem;
+}
+
 .empty-state {
   padding: 1.4rem;
   border: 1px dashed var(--line);
@@ -1077,6 +1083,10 @@ textarea {
 
   .mobile-back {
     display: inline-flex;
+  }
+
+  .detail-close {
+    display: none;
   }
 
   .summary-grid,

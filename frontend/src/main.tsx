@@ -269,7 +269,7 @@ export function App() {
 
   async function refreshCurrentView() {
     await loadEmails();
-    if (selectedEmailId != null && modalMode && view !== "settings") {
+    if (selectedEmailId != null && view !== "settings") {
       await reloadSelectedEmail(selectedEmailId);
     }
   }
@@ -299,14 +299,14 @@ export function App() {
     const snapshotEmails = emails;
     const snapshotSelectedEmail = selectedEmail;
     const snapshotThread = thread;
-    const shouldCloseModal = selectedEmailId === emailId && modalMode !== null;
+    const shouldCloseDetail = selectedEmailId === emailId;
     setAppError("");
     setAppSuccess("");
     applyOptimisticStatus(emailId, status);
     try {
       await apiPost(`/api/emails/${emailId}/status`, { status });
       setAppSuccess(successMessage);
-      if (shouldCloseModal && (status === "spam" || status === "archived" || status === "reply_later")) {
+      if (shouldCloseDetail && (status === "spam" || status === "archived" || status === "reply_later")) {
         closeModal();
       }
       await refreshCurrentView();
@@ -328,7 +328,7 @@ export function App() {
     try {
       await apiPost(`/api/emails/${emailId}/reply-later`, {});
       setAppSuccess(t("success.movedLater"));
-      if (selectedEmailId === emailId && modalMode !== null) closeModal();
+      if (selectedEmailId === emailId) closeModal();
       await refreshCurrentView();
     } catch (error) {
       setEmails(snapshotEmails);
@@ -467,7 +467,7 @@ export function App() {
             actionLoading={actionLoading}
           />
         ) : (
-          <section className="inbox-stage">
+          <section className={`mail-layout${selectedEmailId != null ? " detail-visible" : ""}`}>
             <EmailList
               view={view}
               emails={emails}
@@ -486,7 +486,7 @@ export function App() {
             />
 
             <EmailDetail
-              open={Boolean(selectedEmailId && modalMode)}
+              open={selectedEmailId != null}
               mode={modalMode || "read"}
               selectedEmail={selectedEmail}
               thread={thread}

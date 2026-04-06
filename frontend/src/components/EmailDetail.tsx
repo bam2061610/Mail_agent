@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { AttachmentItem, EmailItem } from "../types";
 import { Badge } from "./common/Badge";
@@ -60,19 +60,6 @@ export function EmailDetail(props: EmailDetailProps) {
     return selected.body_text || selected.body_html || "";
   }, [props.selectedEmail]);
 
-  useEffect(() => {
-    if (!props.open) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        props.onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [props.open, props.onClose]);
-
-  if (!props.open) return null;
-
   const selected = props.selectedEmail;
   const isOutbound = selected ? selected.direction === "sent" || selected.direction === "outbound" : false;
   const recipientList = splitValue(props.replyTo);
@@ -80,22 +67,33 @@ export function EmailDetail(props: EmailDetailProps) {
   const bccList = splitValue(props.replyBcc);
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={props.mode === "reply" ? t("detail.replyTitle") : t("detail.readTitle")} onMouseDown={props.onClose}>
-      <div className="modal-card email-modal" onMouseDown={(event) => event.stopPropagation()}>
+    <section className="detail-panel email-detail-panel" aria-label={props.mode === "reply" ? t("detail.replyTitle") : t("detail.readTitle")}>
+      {!props.open || !selected ? (
+        <div className="detail-empty">
+          <div className="empty-state">
+            <strong>{t("detail.selectItem")}</strong>
+            <p>{t("detail.selectItemDesc")}</p>
+          </div>
+        </div>
+      ) : (
+        <>
         <div className="modal-header">
           <div className="modal-heading">
             <p className="eyebrow">{props.mode === "reply" ? t("detail.replyTitle") : t("detail.readTitle")}</p>
-            <h3 title={selected?.subject || t("queue.noSubject")}>{selected?.subject || t("queue.noSubject")}</h3>
-            <p className="modal-subtitle" title={selected?.sender_name || selected?.sender_email || t("queue.unknownSender")}>
-              {selected?.sender_name || selected?.sender_email || t("queue.unknownSender")}
+            <h3 title={selected.subject || t("queue.noSubject")}>{selected.subject || t("queue.noSubject")}</h3>
+            <p className="modal-subtitle" title={selected.sender_name || selected.sender_email || t("queue.unknownSender")}>
+              {selected.sender_name || selected.sender_email || t("queue.unknownSender")}
             </p>
           </div>
           <div className="modal-header-actions">
+            <button className="button button-ghost mobile-back" type="button" onClick={props.onClose}>
+              ← {t("detail.backToList")}
+            </button>
             <button className="button button-secondary" type="button" onClick={() => props.onModeChange(props.mode === "reply" ? "read" : "reply")}>
               {props.mode === "reply" ? t("detail.backToRead") : t("detail.replyNow")}
             </button>
-            <button className="button button-ghost" type="button" onClick={props.onClose}>
-              {t("detail.closeModal")}
+            <button className="button button-ghost detail-close" type="button" onClick={props.onClose} aria-label={t("detail.closeModal")}>
+              ×
             </button>
           </div>
         </div>
@@ -128,7 +126,7 @@ export function EmailDetail(props: EmailDetailProps) {
                   <h4 className="section-title">{t("detail.thread")}</h4>
                   <div className="inline-badges">
                     {isOutbound ? <Badge tone="accent">Sent</Badge> : <Badge tone="neutral">Inbox</Badge>}
-                    {selected?.attachment_count ? <Badge tone="neutral">{t("queue.attachments", { count: selected.attachment_count })}</Badge> : null}
+                    {selected.attachment_count ? <Badge tone="neutral">{t("queue.attachments", { count: selected.attachment_count })}</Badge> : null}
                   </div>
                 </div>
                 <div className="detail-feed">
@@ -166,7 +164,7 @@ export function EmailDetail(props: EmailDetailProps) {
                   <h4 className="section-title">{props.mode === "reply" ? t("detail.replyTitle") : t("detail.readTitle")}</h4>
                   <div className="inline-badges">
                     <Badge tone="accent">{props.replyLanguage.toUpperCase()}</Badge>
-                    {selected?.preferred_reply_language ? <Badge tone="neutral">{selected.preferred_reply_language.toUpperCase()}</Badge> : null}
+                    {selected.preferred_reply_language ? <Badge tone="neutral">{selected.preferred_reply_language.toUpperCase()}</Badge> : null}
                   </div>
                 </div>
 
@@ -297,7 +295,8 @@ export function EmailDetail(props: EmailDetailProps) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+        </>
+      )}
+    </section>
   );
 }
