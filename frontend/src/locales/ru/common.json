@@ -55,12 +55,29 @@
     "allActive": "Все активные",
     "clear": "Очередь пуста",
     "clearDesc": "Нет активных писем для текущего фильтра.",
+    "analyzing": "AI анализирует...",
     "unknownSender": "Неизвестный отправитель",
     "noSubject": "Без темы",
     "noPreview": "Предпросмотр недоступен.",
+    "justNow": "Только что",
+    "emailsCount": "писем",
     "waitDays": "{{count}}д ожидания",
     "attachments": "вложения {{count}}",
     "owner": "владелец #{{id}}"
+  },
+  "status": {
+    "sent": "Отправлено"
+  },
+  "success": {
+    "draftGenerated": "Черновик сгенерирован.",
+    "replySent": "Ответ отправлен.",
+    "movedLater": "Перемещено в «Ответить позже».",
+    "movedSpam": "Помечено как спам.",
+    "archived": "Архивировано.",
+    "restored": "Восстановлено."
+  },
+  "errors": {
+    "translateFailed": "Не удалось перевести черновик."
   },
   "detail": {
     "title": "Детали треда",

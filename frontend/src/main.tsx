@@ -24,6 +24,12 @@ function buildReplySubject(subject?: string | null): string {
   return subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
 }
 
+function normalizeReplyLanguage(value?: string | null): "ru" | "en" | "tr" {
+  const normalized = (value || "").toLowerCase();
+  if (normalized === "en" || normalized === "tr") return normalized;
+  return "ru";
+}
+
 function filterEmailsForView(view: MailView, emails: EmailItem[]): EmailItem[] {
   if (view !== "inbox") return emails;
   return emails.filter((item) => item.status !== "spam" && item.status !== "archived" && item.status !== "reply_later");
@@ -50,7 +56,7 @@ export function App() {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [search, setSearch] = useState("");
   const [draftText, setDraftText] = useState("");
-  const [replyLanguage, setReplyLanguage] = useState<"ru" | "en">("ru");
+  const [replyLanguage, setReplyLanguage] = useState<"ru" | "en" | "tr">("ru");
   const [replyTo, setReplyTo] = useState("");
   const [replyCc, setReplyCc] = useState("");
   const [replyBcc, setReplyBcc] = useState("");
@@ -119,8 +125,8 @@ export function App() {
   const initializeReplyState = useCallback(
     (detail: EmailItem, threadItems: EmailItem[]) => {
       const latest = threadItems[threadItems.length - 1] || detail;
-      const inferredLanguage = (latest.preferred_reply_language || latest.detected_source_language || detail.preferred_reply_language || "ru").toLowerCase();
-      setReplyLanguage(inferredLanguage === "en" ? "en" : "ru");
+      const inferredLanguage = normalizeReplyLanguage(latest.preferred_reply_language || latest.detected_source_language || detail.preferred_reply_language || "ru");
+      setReplyLanguage(inferredLanguage);
       setReplyTo(detail.sender_email || "");
       setReplyCc("");
       setReplyBcc("");
@@ -128,7 +134,7 @@ export function App() {
       setReplyPrompt("");
       setReplySignature(settingsSignature || currentUser?.full_name || currentUser?.email || "");
       setDraftText(detail.ai_draft_reply || "");
-      return inferredLanguage === "en" ? "en" : "ru";
+      return inferredLanguage;
     },
     [currentUser, settingsSignature]
   );
@@ -181,10 +187,31 @@ export function App() {
     [currentUser, initializeReplyState]
   );
 
+  const generateDraftForEmail = useCallback(
+    async (emailId: number, options?: { targetLanguage?: "ru" | "en" | "tr"; customPrompt?: string; showSuccess?: boolean }) => {
+      setMailActionLoading("draft");
+      setDraftText("");
+      try {
+        const response = await apiPost<DraftGenerationResponse>(`/api/emails/${emailId}/generate-draft`, {
+          target_language: options?.targetLanguage || replyLanguage,
+          custom_prompt: options?.customPrompt?.trim() || undefined,
+        });
+        setDraftText(response.draft_reply);
+        setReplyLanguage(normalizeReplyLanguage(response.target_language));
+        setModalMode("reply");
+        if (options?.showSuccess) {
+          setAppSuccess(t("success.draftGenerated"));
+        }
+      } finally {
+        setMailActionLoading(null);
+      }
+    },
+    [replyLanguage, t]
+  );
+
   const openEmailModal = useCallback(
     async (emailId: number, mode: "read" | "reply" = "read", autoGenerate = false) => {
       if (!currentUser) return;
-      const promptText = autoGenerate ? "" : replyPrompt.trim();
       setSelectedEmailId(emailId);
       setModalMode(mode);
       setLoadingDetail(true);
@@ -192,20 +219,16 @@ export function App() {
       try {
         const inferredLanguage = await reloadSelectedEmail(emailId);
         if (mode === "reply" && autoGenerate) {
-          const response = await apiPost<DraftGenerationResponse>(`/api/emails/${emailId}/generate-draft`, {
-            target_language: inferredLanguage || replyLanguage,
-            custom_prompt: promptText || undefined,
-          });
-          setDraftText(response.draft_reply);
-          setReplyLanguage(response.target_language === "en" ? "en" : "ru");
+          setAppSuccess("");
+          await generateDraftForEmail(emailId, { targetLanguage: inferredLanguage, customPrompt: "", showSuccess: false });
         }
       } catch (error) {
-        setAppError(getErrorMessage(error, "Could not load the selected email."));
+        setAppError(getErrorMessage(error, autoGenerate ? "Could not generate draft." : "Could not load the selected email."));
       } finally {
         setLoadingDetail(false);
       }
     },
-    [currentUser, reloadSelectedEmail, replyLanguage, replyPrompt]
+    [currentUser, generateDraftForEmail, reloadSelectedEmail]
   );
 
   useEffect(() => {
@@ -241,6 +264,7 @@ export function App() {
     setReplyPrompt("");
     setReplySignature("");
     setLoadingDetail(false);
+    setMailActionLoading(null);
   }, []);
 
   async function refreshCurrentView() {
@@ -303,7 +327,7 @@ export function App() {
     applyOptimisticStatus(emailId, "reply_later");
     try {
       await apiPost(`/api/emails/${emailId}/reply-later`, {});
-      setAppSuccess("Moved to Reply Later.");
+      setAppSuccess(t("success.movedLater"));
       if (selectedEmailId === emailId && modalMode !== null) closeModal();
       await refreshCurrentView();
     } catch (error) {
@@ -318,18 +342,34 @@ export function App() {
     if (!selectedEmailId) return;
     setAppError("");
     setAppSuccess("");
-    setMailActionLoading("draft");
     try {
-      const response = await apiPost<DraftGenerationResponse>(`/api/emails/${selectedEmailId}/generate-draft`, {
-        target_language: replyLanguage,
-        custom_prompt: replyPrompt.trim() || undefined,
+      await generateDraftForEmail(selectedEmailId, {
+        targetLanguage: replyLanguage,
+        customPrompt: replyPrompt,
+        showSuccess: true,
       });
-      setDraftText(response.draft_reply);
-      setReplyLanguage(response.target_language === "en" ? "en" : "ru");
-      setModalMode("reply");
-      setAppSuccess("Draft generated.");
     } catch (error) {
       setAppError(getErrorMessage(error, "Could not generate draft."));
+    }
+  }
+
+  async function translateDraft(targetLang: "ru" | "en" | "tr") {
+    if (!selectedEmailId || !draftText.trim()) return;
+    setAppError("");
+    setMailActionLoading("draft");
+    try {
+      const response = await apiPost<DraftGenerationResponse>(
+        `/api/emails/${selectedEmailId}/rewrite-draft`,
+        {
+          current_draft: draftText,
+          instruction: `translate to ${targetLang}`,
+          target_language: targetLang,
+        }
+      );
+      setDraftText(response.draft_reply);
+      setReplyLanguage(targetLang);
+    } catch (error) {
+      setAppError(getErrorMessage(error, t("errors.translateFailed")));
     } finally {
       setMailActionLoading(null);
     }
@@ -350,7 +390,7 @@ export function App() {
         save_as_sent_record: true,
       });
       await apiPost(`/api/emails/${selectedEmailId}/reply`, payload);
-      setAppSuccess("Reply sent.");
+      setAppSuccess(t("success.replySent"));
       closeModal();
       await loadEmails();
     } catch (error) {
@@ -418,10 +458,10 @@ export function App() {
         {view === "settings" ? (
           <SettingsPanel
             currentUser={currentUser}
-            language={i18n.language.startsWith("ru") ? "ru" : "en"}
+            language={i18n.language.startsWith("ru") ? "ru" : i18n.language.startsWith("tr") ? "tr" : "en"}
             onLanguageChange={(language) => {
               void i18n.changeLanguage(language);
-              setAppSuccess(language === "ru" ? "Язык изменен." : "Language updated.");
+              setAppSuccess(language === "ru" ? "Язык изменен." : language === "tr" ? "Dil güncellendi." : "Language updated.");
             }}
             onLogout={() => void handleLogout()}
             actionLoading={actionLoading}
@@ -438,9 +478,9 @@ export function App() {
               onSelectEmail={(emailId) => {
                 void openEmailModal(emailId, "read");
               }}
-              onArchiveEmail={(emailId) => void updateStatus(emailId, "archived", "Message archived.")}
-              onSpamEmail={(emailId) => void updateStatus(emailId, "spam", "Message moved to spam.")}
-              onRestoreEmail={(emailId) => void updateStatus(emailId, "new", "Message restored.")}
+              onArchiveEmail={(emailId) => void updateStatus(emailId, "archived", t("success.archived"))}
+              onSpamEmail={(emailId) => void updateStatus(emailId, "spam", t("success.movedSpam"))}
+              onRestoreEmail={(emailId) => void updateStatus(emailId, "new", t("success.restored"))}
               onReplyLaterEmail={(emailId) => void moveReplyLater(emailId)}
               onReplyWithAi={(emailId) => void openEmailModal(emailId, "reply", true)}
             />
@@ -472,9 +512,10 @@ export function App() {
               onReplySignatureChange={setReplySignature}
               onReplyLanguageChange={setReplyLanguage}
               onGenerateDraft={() => void generateDraft()}
+              onTranslateDraft={(lang) => void translateDraft(lang)}
               onSendReply={() => void sendReply()}
-              onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", "Message archived.") : undefined}
-              onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", "Message moved to spam.") : undefined}
+              onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
+              onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
               onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}
             />
           </section>

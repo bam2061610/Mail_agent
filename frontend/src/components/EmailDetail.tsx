@@ -14,7 +14,7 @@ type EmailDetailProps = {
   loading: boolean;
   actionLoading: string | null;
   draftText: string;
-  replyLanguage: "ru" | "en";
+  replyLanguage: "ru" | "en" | "tr";
   replyTo: string;
   replyCc: string;
   replyBcc: string;
@@ -30,8 +30,9 @@ type EmailDetailProps = {
   onReplySubjectChange: (value: string) => void;
   onReplyPromptChange: (value: string) => void;
   onReplySignatureChange: (value: string) => void;
-  onReplyLanguageChange: (value: "ru" | "en") => void;
+  onReplyLanguageChange: (value: "ru" | "en" | "tr") => void;
   onGenerateDraft: () => void;
+  onTranslateDraft: (lang: "ru" | "en" | "tr") => void;
   onSendReply: () => void;
   onArchive: () => void;
   onSpam: () => void;
@@ -172,11 +173,14 @@ export function EmailDetail(props: EmailDetailProps) {
                 {props.mode === "reply" ? (
                   <div className="compose-panel">
                     <div className="compose-toolbar">
-                      <button className={`button button-ghost${props.replyLanguage === "en" ? " is-active" : ""}`} type="button" onClick={() => props.onReplyLanguageChange("en")}>
-                        EN
+                      <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("ru")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
+                        {t("detail.translateRu")}
                       </button>
-                      <button className={`button button-ghost${props.replyLanguage === "ru" ? " is-active" : ""}`} type="button" onClick={() => props.onReplyLanguageChange("ru")}>
-                        RU
+                      <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("en")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
+                        {t("detail.translateEn")}
+                      </button>
+                      <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("tr")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
+                        {t("detail.translateTr")}
                       </button>
                       <button className="button button-secondary" type="button" onClick={props.onGenerateDraft} disabled={props.actionLoading === "draft"}>
                         {props.actionLoading === "draft" ? t("detail.generating") : t("detail.generateDraft")}
@@ -210,7 +214,21 @@ export function EmailDetail(props: EmailDetailProps) {
                     </Field>
 
                     <Field label={t("detail.draftTitle")} full hint={t("detail.replyDraftHint")}>
-                      <textarea rows={8} value={props.draftText} onChange={(event) => props.onDraftChange(event.target.value)} placeholder={t("detail.draftPlaceholder")} />
+                      {props.actionLoading === "draft" ? (
+                        <div className="draft-skeleton">
+                          <div className="skeleton skeleton-line" />
+                          <div className="skeleton skeleton-line" />
+                          <div className="skeleton skeleton-line" style={{ width: "60%" }} />
+                        </div>
+                      ) : (
+                        <textarea
+                          className="draft-textarea"
+                          rows={8}
+                          value={props.draftText}
+                          onChange={(event) => props.onDraftChange(event.target.value)}
+                          placeholder={t("detail.draftPlaceholder")}
+                        />
+                      )}
                     </Field>
 
                     <Field label={t("detail.signature")} full hint={t("detail.signatureHint")}>

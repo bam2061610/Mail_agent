@@ -410,6 +410,16 @@ textarea {
   transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease, background 0.18s ease;
 }
 
+.email-row.priority-critical {
+  border-left: 3px solid #E24B4A;
+  padding-left: calc(1rem - 3px);
+}
+
+.email-row.priority-high {
+  border-left: 3px solid #EF9F27;
+  padding-left: calc(1rem - 3px);
+}
+
 .email-row:hover,
 .email-row.is-selected {
   border-color: rgba(10, 132, 255, 0.16);
@@ -455,6 +465,11 @@ textarea {
   overflow: hidden;
 }
 
+.summary-analyzing {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .email-row-meta {
   display: flex;
   flex-wrap: wrap;
@@ -466,13 +481,7 @@ textarea {
   display: flex;
   align-items: start;
   gap: 0.55rem;
-  opacity: 0.2;
   flex-wrap: wrap;
-  transition: opacity 0.18s ease;
-}
-
-.email-row:hover .email-row-actions,
-.email-row.is-selected .email-row-actions {
   opacity: 1;
 }
 
@@ -835,9 +844,22 @@ textarea {
   pointer-events: none;
 }
 
+.draft-skeleton {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.35rem 0;
+}
+
 .quick-action {
   position: relative;
   white-space: nowrap;
+}
+
+.icon-action {
+  font-size: 1rem;
+  padding: 0.35rem 0.5rem;
+  min-width: 2rem;
+  line-height: 1;
 }
 
 .quick-action::after {
@@ -1013,24 +1035,22 @@ textarea {
     transform: translateX(0);
   }
 
-  .sidebar-backdrop {
+  .mobile-menu {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar-backdrop.is-open {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.28);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.22s ease;
-    z-index: 20;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 49;
   }
 
-  .sidebar-backdrop.is-visible {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .mobile-menu {
-    display: inline-flex;
+  .sidebar.is-open {
+    z-index: 50;
   }
 }
 

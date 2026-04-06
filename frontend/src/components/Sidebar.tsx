@@ -21,7 +21,7 @@ export function Sidebar({ view, open, onClose, onViewChange }: SidebarProps) {
 
   return (
     <>
-      <div className={`sidebar-backdrop${open ? " is-visible" : ""}`} onClick={onClose} aria-hidden="true" />
+      <div className={`sidebar-backdrop${open ? " is-open" : ""}`} onClick={onClose} aria-hidden="true" />
       <aside className={`sidebar${open ? " is-open" : ""}`}>
         <div className="sidebar-brand">
           <Badge tone="accent">Smart Inbox</Badge>

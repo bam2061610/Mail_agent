@@ -6,7 +6,7 @@ import { SummaryPoint } from "./common/SummaryPoint";
 type SettingsPanelProps = {
   currentUser: UserItem | null;
   language: string;
-  onLanguageChange: (language: "ru" | "en") => void;
+  onLanguageChange: (language: "ru" | "en" | "tr") => void;
   onLogout: () => void;
   actionLoading: string | null;
 };
@@ -35,6 +35,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
             onClick={() => props.onLanguageChange("ru")}
           >
             RU
+          </button>
+          <button
+            className={`button button-ghost${props.language === "tr" ? " is-active" : ""}`}
+            type="button"
+            onClick={() => props.onLanguageChange("tr")}
+          >
+            TR
           </button>
         </div>
       </div>
