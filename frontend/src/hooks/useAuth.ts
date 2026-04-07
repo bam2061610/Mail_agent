@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, ApiError, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, saveStoredAuthToken } from "../api";
 import { initialLoginForm, type AuthLoginResponse, type AuthMeResponse, type LoginFormState, type UserItem } from "../types";
@@ -25,19 +25,23 @@ export function useAuth(): UseAuthResult {
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const authMutationVersionRef = useRef(0);
 
   const bootstrapAuth = useCallback(async () => {
+    const mutationVersion = authMutationVersionRef.current;
     setAuthLoading(true);
     try {
       if (!authToken) {
+        if (mutationVersion !== authMutationVersionRef.current) return;
         setCurrentUser(null);
-        setAuthError("");
         return;
       }
       const me = await apiGet<AuthMeResponse>("/api/auth/me");
+      if (mutationVersion !== authMutationVersionRef.current) return;
       setCurrentUser(me.user);
       setAuthError("");
     } catch (error) {
+      if (mutationVersion !== authMutationVersionRef.current) return;
       if (error instanceof ApiError && error.status === 401) {
         clearStoredAuthToken();
         setAuthToken("");
@@ -47,6 +51,7 @@ export function useAuth(): UseAuthResult {
       }
       setCurrentUser(null);
     } finally {
+      if (mutationVersion !== authMutationVersionRef.current) return;
       setAuthLoading(false);
     }
   }, [authToken]);
@@ -62,9 +67,11 @@ export function useAuth(): UseAuthResult {
     setActionLoading("auth-login");
     try {
       const response = await apiPost<AuthLoginResponse>("/api/auth/login", loginForm);
+      authMutationVersionRef.current += 1;
       saveStoredAuthToken(response.access_token);
       setAuthToken(response.access_token);
       setCurrentUser(response.user);
+      setAuthLoading(false);
       setAuthSuccess("Logged in.");
     } catch (error) {
       setAuthError(getErrorMessage(error, "Login failed."));
@@ -80,6 +87,7 @@ export function useAuth(): UseAuthResult {
     } catch {
       // best effort logout
     } finally {
+      authMutationVersionRef.current += 1;
       clearStoredAuthToken();
       setAuthToken("");
       setCurrentUser(null);
