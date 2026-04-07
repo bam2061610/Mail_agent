@@ -5,10 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.config import get_effective_settings
+from app.db import list_account_database_ids, open_account_session
 from app.models.email import Email
 from app.services.mailbox_service import get_enabled_mailbox_configs, list_mailboxes
 
@@ -316,8 +317,9 @@ def collect_admin_health(
 
     attachments_usage = _collect_dir_usage(ATTACHMENTS_DIR)
     backups_usage = _collect_dir_usage(BACKUPS_DIR)
+    account_dbs_usage = _collect_dir_usage(backend_paths(settings.database_url).account_dbs_dir)
 
-    last_sent_at = db_session.query(func.max(Email.last_reply_sent_at)).scalar()
+    last_sent_at = _collect_last_sent_at()
 
     return {
         "overall_status": "ok" if overall_ok else "degraded",
@@ -376,6 +378,7 @@ def collect_admin_health(
         "storage": {
             "attachments": attachments_usage,
             "backups": backups_usage,
+            "account_databases": account_dbs_usage,
             "disk": _collect_disk_usage(DATA_DIR),
         },
         "jobs": {
@@ -426,10 +429,28 @@ def _collect_disk_usage(path: Path) -> dict[str, Any]:
 
 def _check_db_access(db_session: Session) -> dict[str, Any]:
     try:
-        db_session.query(func.count(Email.id)).scalar()
+        db_session.execute(text("SELECT 1"))
         return {"ok": True, "error": None}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)}
+
+
+def _collect_last_sent_at() -> datetime | None:
+    latest: datetime | None = None
+    for mailbox_id in list_account_database_ids():
+        db_session = open_account_session(mailbox_id)
+        try:
+            candidate = db_session.query(func.max(Email.last_reply_sent_at)).scalar()
+        except Exception:  # noqa: BLE001
+            candidate = None
+        finally:
+            db_session.close()
+
+        if candidate is None:
+            continue
+        if latest is None or candidate > latest:
+            latest = candidate
+    return latest
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -454,6 +475,7 @@ def backend_paths(database_url: str) -> SimpleNamespace:
         backend_dir=BACKEND_DIR,
         data_dir=DATA_DIR,
         database_path=database_path,
+        account_dbs_dir=database_path.parent / "account_dbs",
         attachments_dir=ATTACHMENTS_DIR,
         backups_dir=BACKUPS_DIR,
     )

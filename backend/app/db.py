@@ -36,6 +36,10 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+def open_global_session():
+    return SessionLocal()
+
+
 def create_tables() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     sqlite_path = _sqlite_file_path(settings.database_url)
@@ -160,6 +164,8 @@ def _ensure_runtime_setting_columns(target_engine) -> None:
         "ai_auto_spam_enabled": "BOOLEAN",
         "summary_language": "VARCHAR(20)",
         "scan_since_date": "VARCHAR(50)",
+        "run_background_jobs": "BOOLEAN",
+        "run_mail_watchers": "BOOLEAN",
     }
 
     with target_engine.begin() as connection:
@@ -275,6 +281,14 @@ def open_account_session(mailbox_id: str | None = None):
     return session_factory()
 
 
+def get_global_db() -> Generator:
+    db = open_global_session()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def get_db(request: Request) -> Generator:
     mailbox_id = resolve_mailbox_id_from_request(request)
     db = open_account_session(mailbox_id)
@@ -295,3 +309,19 @@ def _account_db_root() -> Path:
     if sqlite_path is not None:
         return sqlite_path.parent / "account_dbs"
     return DATA_DIR / "account_dbs"
+
+
+def dispose_database_engines() -> None:
+    try:
+        engine.dispose()
+    except Exception:  # noqa: BLE001
+        pass
+
+    for account_engine in list(_ACCOUNT_ENGINE_CACHE.values()):
+        try:
+            account_engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass
+
+    _ACCOUNT_ENGINE_CACHE.clear()
+    _ACCOUNT_SESSION_CACHE.clear()

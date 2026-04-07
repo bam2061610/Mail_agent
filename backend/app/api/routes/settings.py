@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_safe_settings_view, save_runtime_settings
-from app.db import open_account_session
+from app.db import open_account_session, open_global_session
 from app.models.action_log import ActionLog
 from app.models.user import User
 from app.schemas.system import (
@@ -142,7 +142,7 @@ def scan_single_mailbox(
 
 
 def _log_mailbox_action(action_type: str, payload: dict, user: User | None = None) -> None:
-    db = open_account_session()
+    db = open_global_session()
     try:
         db.add(
             ActionLog(

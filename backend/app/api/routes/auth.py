@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.db import get_db
+from app.db import get_global_db
 from app.models.action_log import ActionLog
 from app.models.user import User
 from app.schemas.system import (
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=AuthLoginResponse)
-def login(request: AuthLoginRequest, db: Session = Depends(get_db)) -> AuthLoginResponse:
+def login(request: AuthLoginRequest, db: Session = Depends(get_global_db)) -> AuthLoginResponse:
     user = authenticate_user(db, request.email, request.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -48,7 +48,7 @@ def login(request: AuthLoginRequest, db: Session = Depends(get_db)) -> AuthLogin
 def logout(
     authorization: str | None = Header(default=None),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_global_db),
 ) -> OperationStatusResponse:
     token = None
     if authorization:
@@ -78,7 +78,7 @@ def me(current_user: User = Depends(get_current_user)) -> AuthMeResponse:
 def refresh_token(
     request: AuthRefreshRequest,
     authorization: str | None = Header(default=None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_global_db),
 ) -> AuthLoginResponse:
     token = request.access_token or extract_bearer_token(authorization)
     if not token:

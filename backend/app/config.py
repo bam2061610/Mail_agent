@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     followup_overdue_days: int = Field(default=3, alias="FOLLOWUP_OVERDUE_DAYS")
     catchup_absence_hours: int = Field(default=8, alias="CATCHUP_ABSENCE_HOURS")
     sent_review_batch_limit: int = Field(default=20, alias="SENT_REVIEW_BATCH_LIMIT")
+    run_background_jobs: bool = Field(default=True, alias="RUN_BACKGROUND_JOBS")
+    run_mail_watchers: bool = Field(default=True, alias="RUN_MAIL_WATCHERS")
     cors_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost:5173"],
         alias="CORS_ORIGINS",
@@ -164,6 +166,8 @@ def _runtime_setting_to_dict(row: Any) -> dict[str, Any]:
         "followup_overdue_days": row.followup_overdue_days,
         "catchup_absence_hours": row.catchup_absence_hours,
         "sent_review_batch_limit": row.sent_review_batch_limit,
+        "run_background_jobs": row.run_background_jobs,
+        "run_mail_watchers": row.run_mail_watchers,
     }
     cors_value = row.cors_origins_json
     if cors_value:

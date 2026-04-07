@@ -107,6 +107,7 @@ export function App() {
   }, [appSuccess]);
 
   useEffect(() => {
+    setMobileSidebarOpen(false);
     if (!currentUser) {
       setView("inbox");
       setEmails([]);

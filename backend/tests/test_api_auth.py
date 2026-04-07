@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+from fastapi.testclient import TestClient
+
 from app.models.session_token import SessionToken
 from app.services.auth_service import cleanup_expired_session_tokens
 
@@ -35,6 +37,26 @@ def test_mailbox_context_request_lifecycle_survives_context_reset(client, admin_
     )
     assert me.status_code == 200
     assert me.json()["user"]["email"] == admin_user.email
+
+
+def test_auth_login_with_mailbox_header_works_in_real_runtime(db_session, admin_user, monkeypatch):
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "start_scheduler", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_module, "stop_scheduler", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main_module, "start_mail_watchers", lambda: None)
+    monkeypatch.setattr(main_module, "stop_mail_watchers", lambda *_args, **_kwargs: None)
+    main_module.app.dependency_overrides.clear()
+
+    with TestClient(main_module.app) as runtime_client:
+        response = runtime_client.post(
+            "/api/auth/login",
+            json={"email": admin_user.email, "password": "admin123"},
+            headers={"X-Mailbox-Id": "mailbox-a"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["user"]["email"] == admin_user.email
 
 
 def test_auth_rejects_bad_credentials(client, admin_user):

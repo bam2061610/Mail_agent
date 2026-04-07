@@ -9,7 +9,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.config import get_effective_settings
-from app.db import get_db
+from app.db import get_global_db
 from app.models.session_token import SessionToken
 from app.models.user import User
 
@@ -123,7 +123,7 @@ def cleanup_expired_session_tokens(db_session: Session, *, now: datetime | None 
 
 def get_current_user(
     authorization: str | None = Header(default=None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_global_db),
 ) -> User:
     token = extract_bearer_token(authorization)
     if not token:
@@ -139,7 +139,7 @@ def get_current_user(
 
 def get_optional_current_user(
     authorization: str | None = Header(default=None),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_global_db),
 ) -> User | None:
     token = extract_bearer_token(authorization)
     if token:

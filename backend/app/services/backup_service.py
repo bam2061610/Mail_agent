@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_effective_settings
+from app.db import dispose_database_engines
 from app.services.diagnostics_service import backend_paths
 
 BACKUP_KEEP_DEFAULT = 10
 BACKUP_CONFIG_FILES = [
     "rules.json",
     "templates.json",
-    "preferences.profile.json",
+    "preference_profile.json",
     "digest_state.json",
 ]
 
@@ -90,6 +91,16 @@ def create_backup(
             shutil.copy2(source_path, config_target / filename)
             restored_files.append(filename)
 
+    account_db_ids: list[str] = []
+    if paths.account_dbs_dir.exists():
+        account_db_ids = sorted(
+            item.name
+            for item in paths.account_dbs_dir.iterdir()
+            if item.is_dir() and (item / "mail_agent.db").exists()
+        )
+        if account_db_ids:
+            shutil.copytree(paths.account_dbs_dir, backup_dir / "account_dbs")
+
     attachments_copied = False
     if include_attachments and paths.attachments_dir.exists():
         shutil.copytree(paths.attachments_dir, backup_dir / "attachments")
@@ -100,6 +111,7 @@ def create_backup(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "reason": reason,
         "database_file": db_target.name if db_target.exists() else None,
+        "account_db_ids": account_db_ids,
         "config_files": restored_files,
         "include_attachments": attachments_copied,
         "app_env": getattr(settings, "app_env", "development"),
@@ -139,14 +151,20 @@ def restore_backup(
         safety = create_backup(include_attachments=False, keep_last=BACKUP_KEEP_DEFAULT, reason=f"pre_restore:{backup_name}")
         safety_backup_name = safety.backup_name
 
+    dispose_database_engines()
+
     db_source = backup_dir / "mail_agent.db"
     restored_db = False
     if db_source.exists():
-        from app.db import engine
-
-        engine.dispose()
         paths.database_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(db_source, paths.database_path)
+        restored_db = True
+
+    account_dbs_source = backup_dir / "account_dbs"
+    if account_dbs_source.exists():
+        if paths.account_dbs_dir.exists():
+            shutil.rmtree(paths.account_dbs_dir)
+        shutil.copytree(account_dbs_source, paths.account_dbs_dir)
         restored_db = True
 
     restored_configs: list[str] = []

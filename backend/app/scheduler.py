@@ -7,7 +7,7 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.config import get_effective_settings
-from app.db import SessionLocal, list_account_database_ids, open_account_session
+from app.db import SessionLocal, list_account_database_ids, open_account_session, open_global_session
 from app.models.action_log import ActionLog
 from app.services.ai_analyzer import analyze_pending
 from app.services.diagnostics_service import (
@@ -149,13 +149,11 @@ def run_scan_and_analyze() -> ScheduledRunResult:
 
 
 def run_session_token_cleanup() -> int:
-    removed_total = 0
-    for mailbox_id in list_account_database_ids():
-        db_session = open_account_session(mailbox_id)
-        try:
-            removed_total += cleanup_expired_session_tokens(db_session)
-        finally:
-            db_session.close()
+    db_session = open_global_session()
+    try:
+        removed_total = cleanup_expired_session_tokens(db_session)
+    finally:
+        db_session.close()
     if removed_total:
         logger.info("Session token cleanup removed %s expired token(s)", removed_total)
     return removed_total

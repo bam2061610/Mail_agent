@@ -408,7 +408,7 @@ textarea {
 
 .mail-layout {
   display: grid;
-  grid-template-columns: minmax(340px, 1.1fr) minmax(420px, 1fr);
+  grid-template-columns: minmax(460px, 1.45fr) minmax(360px, 0.95fr);
   gap: 1rem;
   align-items: start;
 }
@@ -535,18 +535,20 @@ textarea {
   font-size: 1rem;
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  line-height: 1.35;
 }
 
 .email-row-title p {
   margin: 0.25rem 0 0;
   color: var(--muted);
   font-size: 0.95rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  line-height: 1.4;
 }
 
 .email-row-title .badge {
@@ -555,12 +557,16 @@ textarea {
 }
 
 .email-row-summary {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(10, 132, 255, 0.06);
+  border: 1px solid rgba(10, 132, 255, 0.1);
+  overflow: visible;
   word-break: break-word;
-  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.5;
 }
 
 .email-row-summary-prefix {
@@ -662,10 +668,10 @@ textarea {
 .detail-summary-copy {
   margin-top: 0.65rem;
   font-weight: 600;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
+  white-space: pre-wrap;
+  line-height: 1.55;
 }
 
 .detail-summary-copy.is-fallback {
@@ -700,11 +706,12 @@ textarea {
 .summary-point-value {
   display: block;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
   font-size: 1rem;
   font-weight: 600;
+  line-height: 1.4;
 }
 
 .detail-feed {

@@ -34,6 +34,8 @@ class RuntimeSetting(Base):
     followup_overdue_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     catchup_absence_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sent_review_batch_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    run_background_jobs: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    run_mail_watchers: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     interface_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
     summary_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
     scan_since_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
