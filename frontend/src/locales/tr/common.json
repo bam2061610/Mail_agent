@@ -139,6 +139,7 @@
     "draftNeedsWork": "Taslak geliştirme gerektiriyor",
     "importance": "Önem",
     "summaryHeading": "Özet",
+    "generateSummary": "Özet oluştur",
     "regenerateSummary": "Özeti {{language}} dilinde yeniden oluştur",
     "originalMessage": "Orijinal mesaj",
     "showOriginal": "Orijinali göster",

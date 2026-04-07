@@ -139,6 +139,7 @@
     "draftNeedsWork": "Draft needs work",
     "importance": "Importance",
     "summaryHeading": "Summary",
+    "generateSummary": "Generate summary",
     "regenerateSummary": "Regenerate summary in {{language}}",
     "originalMessage": "Original message",
     "showOriginal": "Show original",

@@ -1088,6 +1088,24 @@ textarea {
   white-space: nowrap;
 }
 
+.quick-action::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease 0.3s;
+  z-index: 1000;
+}
+
 .icon-action {
   display: inline-flex;
   align-items: center;
@@ -1130,30 +1148,8 @@ textarea {
   background: rgba(10, 132, 255, 0.12);
 }
 
-[data-tooltip] {
-  position: relative;
-}
-
-[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #333;
-  color: #fff;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease 0.3s;
-  z-index: 1000;
-}
-
-[data-tooltip]:hover::after,
-[data-tooltip]:focus-visible::after {
+.quick-action:hover::after,
+.quick-action:focus-visible::after {
   opacity: 1;
 }
 

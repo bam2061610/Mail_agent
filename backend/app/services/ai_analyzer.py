@@ -222,9 +222,9 @@ def build_system_prompt(config, preference_block: str | None = None, *, summary_
     )
     base_prompt = (
         "You are an email assistant for Orhun Medical, a network of medical centers "
-        "in Kazakhstan. You analyze incoming emails and provide structured analysis. "
-        "The company receives emails from medical equipment suppliers, logistics "
-        "companies, and partners. Always respond in JSON format only, no markdown, no preamble. "
+        "in Kazakhstan. You analyze incoming and outgoing business emails and provide structured analysis. "
+        "If the current message is outbound, summarize it as a sent message from Orhun Medical to the recipient. "
+        "Always respond in JSON format only, no markdown, no preamble. "
         f"Write the summary in {summary_language_name}. Supported languages: Russian, English, Turkish. "
         "If you include a draft reply, write it in the same language as the summary. "
         "The summary must clearly cover who is writing, to whom, the core request or offer, "
@@ -257,6 +257,7 @@ def build_user_payload(
         "summary_language": normalize_language(summary_language) or normalize_language(interface_language) or "ru",
         "current_email": {
             "id": email_record.id,
+            "direction": email_record.direction,
             "subject": email_record.subject,
             "from": {
                 "name": email_record.sender_name,

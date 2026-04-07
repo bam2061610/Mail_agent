@@ -82,8 +82,12 @@ export function EmailDetail(props: EmailDetailProps) {
   const originalText = selected?.body_text || "";
   const hasOriginal = Boolean(originalHtml || originalText);
   const detectedLanguage = normalizeLanguageCode(selected?.detected_source_language);
-  const shouldOfferSummaryRefresh = Boolean(selected?.ai_summary && detectedLanguage && detectedLanguage !== props.summaryLanguage);
+  const hasSelectedSummary = Boolean(selected?.ai_summary);
+  const shouldOfferSummaryRefresh = Boolean(selected && (isOutbound || !hasSelectedSummary || (detectedLanguage && detectedLanguage !== props.summaryLanguage)));
   const summaryLanguageLabelKey = props.summaryLanguage === "ru" ? "settings.russian" : props.summaryLanguage === "tr" ? "settings.turkish" : "settings.english";
+  const summaryActionLabel = hasSelectedSummary
+    ? t("detail.regenerateSummary", { language: t(summaryLanguageLabelKey) })
+    : t("detail.generateSummary");
 
   if (!props.open) {
     return (
@@ -280,7 +284,7 @@ export function EmailDetail(props: EmailDetailProps) {
             >
               {props.actionLoading === "summary"
                 ? t("detail.generating")
-                : t("detail.regenerateSummary", { language: t(summaryLanguageLabelKey) })}
+                : summaryActionLabel}
             </button>
           ) : null}
           <div className="summary-grid">

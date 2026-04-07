@@ -139,6 +139,7 @@
     "draftNeedsWork": "Черновик нужно доработать",
     "importance": "Важность",
     "summaryHeading": "Сводка",
+    "generateSummary": "Сгенерировать сводку",
     "regenerateSummary": "Пересоздать саммари на {{language}}",
     "originalMessage": "Оригинал письма",
     "showOriginal": "Показать оригинал",

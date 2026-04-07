@@ -247,6 +247,8 @@ def test_reply_email_with_mocked_smtp(client, admin_auth_headers, admin_user, sa
             subject="Re: ok",
         ),
     )
+    monkeypatch.setattr(emails_route, "regenerate_email_summary", lambda **_kwargs: "Sent summary.")
+
     response = client.post(
         f"/api/emails/{sample_email.id}/reply",
         headers=admin_auth_headers,
@@ -260,6 +262,7 @@ def test_reply_email_with_mocked_smtp(client, admin_auth_headers, admin_user, sa
     assert sent_email.direction == "outbound"
     assert sent_email.folder.lower() == "sent"
     assert sent_email.sent_by_user_id == admin_user.id
+    assert sent_email.ai_summary == "Sent summary."
 
 
 def test_generate_draft_with_mocked_ai(client, admin_auth_headers, sample_email, monkeypatch):

@@ -237,6 +237,61 @@ it("switches between inbox and settings and toggles language", async () => {
   expect(screen.getByText("Язык изменен.")).toBeInTheDocument();
 });
 
+it("offers summary generation for sent emails without analysis", async () => {
+  const sentEmail = {
+    id: 99,
+    subject: "Outbound follow-up",
+    sender_email: "admin@orhun.local",
+    sender_name: "Admin User",
+    status: "replied",
+    priority: "medium",
+    importance_score: 5,
+    category: "Other",
+    ai_analyzed: true,
+    requires_reply: false,
+    is_spam: false,
+    date_received: "2026-04-03T08:00:00Z",
+    ai_summary: "",
+    body_text: "Following up on our prior discussion.",
+    direction: "sent",
+    folder: "Sent",
+    attachment_count: 0,
+    preferred_reply_language: "en",
+  };
+
+  installFetchMock({
+    "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
+    "GET /api/auth/me": { body: { user: adminUser } },
+    "GET /api/settings": { body: { signature: "Best regards,\nAdmin User", summary_language: "ru", interface_language: "ru", auto_spam_enabled: true } },
+    "GET /api/emails?limit=60&direction=inbound": { body: [] },
+    "GET /api/emails?limit=60&direction=sent": { body: [sentEmail] },
+    "GET /api/emails/99": { body: { ...sentEmail, thread_id: "thread-99", created_at: "2026-04-03T08:00:00Z", updated_at: "2026-04-03T08:00:00Z" } },
+    "GET /api/emails/99/thread": {
+      body: {
+        thread_id: "thread-99",
+        emails: [
+          { ...sentEmail, thread_id: "thread-99", created_at: "2026-04-03T08:00:00Z", updated_at: "2026-04-03T08:00:00Z" },
+        ],
+      },
+    },
+    "GET /api/emails/99/attachments": { body: [] },
+  });
+
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
+  await user.type(screen.getByLabelText("Password"), "admin123");
+  await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+  await user.click(screen.getByRole("button", { name: "Sent" }));
+  await screen.findByText("Outbound follow-up");
+
+  await user.click(screen.getByText("Outbound follow-up"));
+  const dialog = await screen.findByRole("dialog", { name: "Read message" });
+  expect(within(dialog).getByRole("button", { name: "Generate summary" })).toBeInTheDocument();
+});
+
 it("bootstraps from stored token and keeps the auth header on requests", async () => {
   localStorage.setItem("oma_token", "token-from-storage");
   const calls = installFetchMock(authenticatedRoutes(adminUser));

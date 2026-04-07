@@ -59,6 +59,14 @@ export function Clock(props: LucideProps) {
   );
 }
 
+export function Check(props: LucideProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </IconBase>
+  );
+}
+
 export function Sparkles(props: LucideProps) {
   return (
     <IconBase {...props}>

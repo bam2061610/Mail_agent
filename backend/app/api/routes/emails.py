@@ -367,6 +367,45 @@ def reply_to_email(
             detail="Email was sent via SMTP but local database update failed. Please refresh and verify Sent mailbox.",
         ) from exc
 
+    if sent_email is not None:
+        try:
+            effective_settings = get_effective_settings()
+            summary_thread_history = _load_thread_history_for_summary(db, sent_email)
+            summary_language = (
+                normalize_language(getattr(effective_settings, "summary_language", None))
+                or normalize_language(getattr(original_email, "preferred_reply_language", None))
+                or normalize_language(getattr(original_email, "detected_source_language", None))
+            )
+            preference_block = build_preference_prompt_block(get_preference_profile(db))
+            sent_summary = regenerate_email_summary(
+                email_record=sent_email,
+                thread_history=summary_thread_history,
+                config=effective_settings,
+                summary_language=summary_language or effective_settings.summary_language,
+                preference_block=preference_block,
+            )
+            sent_email.ai_summary = sent_summary
+            db.add(
+                ActionLog(
+                    user_id=current_user.id,
+                    email_id=sent_email.id,
+                    action_type="summary_regenerated",
+                    actor="ai",
+                    details_json=json.dumps(
+                        {
+                            "source": "post_send",
+                            "direction": sent_email.direction,
+                            "thread_id": sent_email.thread_id,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            logger.exception("Post-send summary generation failed for email_id=%s", email_id)
+
     try:
         original_draft = original_email.ai_draft_reply
         draft_feedback = record_draft_feedback(
