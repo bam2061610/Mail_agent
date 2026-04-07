@@ -27,6 +27,9 @@ const adminUser = {
   updated_at: "2026-04-01T10:00:00Z",
 };
 
+const longSummary =
+  "Supplier asks for pricing, delivery timing, contractual terms, approval path, fallback shipment options, and wants the whole status visible without opening extra views.";
+
 beforeEach(async () => {
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -66,8 +69,8 @@ function installFetchMock(routes: Record<string, RouteResponse>): MockCall[] {
   return calls;
 }
 
-function authenticatedRoutes(user = adminUser): Record<string, RouteResponse> {
-  const sampleEmail = {
+function createSampleEmail(overrides: Record<string, unknown> = {}) {
+  return {
     id: 42,
     subject: "Supplier quotation request",
     sender_email: "sales@supplier.com",
@@ -86,10 +89,16 @@ function authenticatedRoutes(user = adminUser): Record<string, RouteResponse> {
     folder: "Inbox",
     attachment_count: 1,
     preferred_reply_language: "en",
+    ...overrides,
   };
+}
+
+function authenticatedRoutes(user = adminUser, emailOverrides: Record<string, unknown> = {}): Record<string, RouteResponse> {
+  const sampleEmail = createSampleEmail(emailOverrides);
 
   return {
     "GET /api/auth/me": { body: { user } },
+    "POST /api/auth/logout": { body: { status: "ok" } },
     "GET /api/settings": { body: { signature: "Best regards,\nAdmin User", summary_language: "ru", interface_language: "ru", auto_spam_enabled: true } },
     "GET /api/emails?limit=60&direction=inbound": { body: [sampleEmail] },
     "GET /api/emails/42": { body: { ...sampleEmail, thread_id: "thread-42", created_at: "2026-04-02T11:50:00Z", updated_at: "2026-04-02T12:00:00Z" } },
@@ -133,6 +142,7 @@ it("logs in and renders the minimal inbox UI", async () => {
   await user.click(screen.getByRole("button", { name: /sign in/i }));
 
   expect(await screen.findByText("Supplier quotation request")).toBeInTheDocument();
+  expect(document.querySelector(".sidebar-backdrop")).toBeNull();
   expect(screen.getByText("Needs reply")).toBeInTheDocument();
   expect(screen.getByLabelText("Importance: 9/10")).toBeInTheDocument();
   expect(screen.queryByText("Hello, please find quotation details attached.")).not.toBeInTheDocument();
@@ -147,6 +157,46 @@ it("logs in and renders the minimal inbox UI", async () => {
   expect(within(dialog).getByRole("button", { name: "Hide original" })).toBeInTheDocument();
   expect(within(dialog).getByText("Hello, please find quotation details attached.")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("keeps long summaries visible and clears transient overlay state across logout and relogin", async () => {
+  installFetchMock({
+    "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
+    ...authenticatedRoutes(adminUser, { ai_summary: longSummary }),
+  });
+
+  const user = userEvent.setup();
+  render(<App />);
+
+  expect(screen.getByText("Use the account provisioned for your workspace.")).toBeInTheDocument();
+  await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
+  await user.type(screen.getByLabelText("Password"), "admin123");
+  await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+  expect(await screen.findByText(longSummary)).toBeInTheDocument();
+  expect(screen.getByText(longSummary).closest(".email-row-summary")).toHaveAttribute("title", longSummary);
+
+  await user.click(screen.getByText("Supplier quotation request"));
+  const dialog = await screen.findByRole("dialog", { name: "Read message" });
+  const detailSummary = dialog.querySelector(".detail-summary-copy");
+  expect(detailSummary).toHaveTextContent(longSummary);
+  expect(detailSummary).toHaveAttribute("title", longSummary);
+
+  await user.click(screen.getByRole("button", { name: /menu/i }));
+  expect(document.querySelector(".sidebar-backdrop")).not.toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Logout" }));
+  expect(await screen.findByText("Mail login")).toBeInTheDocument();
+  expect(document.querySelector(".sidebar-backdrop")).toBeNull();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
+  await user.type(screen.getByLabelText("Password"), "admin123");
+  await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+  expect(await screen.findByText("Supplier quotation request")).toBeInTheDocument();
+  expect(document.querySelector(".sidebar-backdrop")).toBeNull();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 

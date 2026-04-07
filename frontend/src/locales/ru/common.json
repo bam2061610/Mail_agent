@@ -18,7 +18,7 @@
     "password": "Пароль",
     "signingIn": "Вход...",
     "signin": "Sign in / Войти",
-    "defaultCreds": "Стандартные учетные данные при первом запуске: admin@orhun.local / admin123"
+    "provisioningHint": "Используйте учетную запись, выданную для вашего рабочего пространства."
   },
   "nav": {
     "inbox": "Входящие",

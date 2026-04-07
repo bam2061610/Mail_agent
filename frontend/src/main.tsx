@@ -108,13 +108,15 @@ export function App() {
 
   useEffect(() => {
     setMobileSidebarOpen(false);
+    setModalMode(null);
+    setSelectedEmailId(null);
+    setSelectedEmail(null);
+    setThread([]);
+    setAttachments([]);
+    setMailActionLoading(null);
     if (!currentUser) {
       setView("inbox");
       setEmails([]);
-      setSelectedEmailId(null);
-      setSelectedEmail(null);
-      setThread([]);
-      setAttachments([]);
       setDraftText("");
       setReplyLanguage("ru");
       setReplyTo("");
@@ -572,6 +574,7 @@ export function App() {
         <header className="topbar">
           <div className="topbar-left">
             <button className="button button-ghost mobile-menu" type="button" onClick={() => setMobileSidebarOpen((current) => !current)}>
+              <span className="sr-only">{t("app.mobileMenu")}</span>
               ☰
             </button>
             <div>

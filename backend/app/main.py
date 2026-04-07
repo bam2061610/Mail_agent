@@ -13,6 +13,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.reports import router as reports_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.stats import router as stats_router
+from app.api.routes.users import router as users_router
 from app.config import DATA_DIR, settings
 from app.core.process_lock import acquire_process_lock, release_process_lock
 from app.core.logging import configure_logging
@@ -84,3 +85,4 @@ app.include_router(settings_router)
 app.include_router(actions_router)
 app.include_router(admin_router)
 app.include_router(reports_router)
+app.include_router(users_router)

@@ -10,6 +10,9 @@
 
 - [x] `python -m compileall backend/app`
 - [x] `pytest backend/tests -q`
+- [x] `cd backend && alembic upgrade head`
+- [x] `cd frontend && npm test`
+- [x] `cd frontend && npm run build`
 - [x] Critical smoke flow covered by `backend/tests/smoke/test_core_flow.py`
 - [ ] Manual UI sanity pass in browser on target environment
 

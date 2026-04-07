@@ -18,7 +18,7 @@
     "password": "Şifre",
     "signingIn": "Giriş yapılıyor...",
     "signin": "Giriş yap",
-    "defaultCreds": "İlk çalıştırmada varsayılan bilgiler: admin@orhun.local / admin123"
+    "provisioningHint": "Çalışma alanınız için sağlanan hesapla giriş yapın."
   },
   "nav": {
     "inbox": "Gelen kutusu",

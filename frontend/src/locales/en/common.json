@@ -18,7 +18,7 @@
     "password": "Password",
     "signingIn": "Signing in...",
     "signin": "Sign in / Войти",
-    "defaultCreds": "Default credentials on first run: admin@orhun.local / admin123"
+    "provisioningHint": "Use the account provisioned for your workspace."
   },
   "nav": {
     "inbox": "Inbox",

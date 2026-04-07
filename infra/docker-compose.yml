@@ -3,7 +3,20 @@ services:
   backend:
     build: ../backend
     env_file: ../.env
+    environment:
+      RUN_BACKGROUND_JOBS: "false"
+      RUN_MAIL_WATCHERS: "false"
     ports: ["8000:8000"]
+    volumes:
+      - backend_data:/app/data
+  worker:
+    build: ../backend
+    env_file: ../.env
+    command: ["python", "-m", "app.worker"]
+    environment:
+      RUN_BACKGROUND_JOBS: "true"
+      RUN_MAIL_WATCHERS: "true"
+    depends_on: [backend]
     volumes:
       - backend_data:/app/data
   frontend:

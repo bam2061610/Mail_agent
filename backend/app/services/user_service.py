@@ -1,11 +1,16 @@
+import logging
+import secrets
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.user import User
 from app.services.auth_service import hash_password, validate_password_strength
 
 VALID_ROLES = {"admin", "manager", "operator", "viewer"}
+logger = logging.getLogger(__name__)
 
 
 def list_users(db_session: Session) -> list[User]:
@@ -103,19 +108,42 @@ def ensure_default_admin() -> None:
     # Import lazily so tests/runtime use the active global database session.
     from app.db import open_global_session
 
+    if not settings.bootstrap_default_admin:
+        return
+
     db = open_global_session()
     try:
         existing = db.query(User).count()
         if existing > 0:
             return
+
+        bootstrap_email = settings.bootstrap_admin_email.strip().lower() or "admin@orhun.local"
+        bootstrap_name = settings.bootstrap_admin_full_name.strip() or "Bootstrap Admin"
+        bootstrap_password = settings.bootstrap_admin_password.strip()
+        generated_password = None
+        if not bootstrap_password:
+            generated_password = secrets.token_urlsafe(12)
+            bootstrap_password = generated_password
+
         admin = User(
-            email="admin@orhun.local",
-            full_name="Default Admin",
-            password_hash=hash_password("admin123"),
+            email=bootstrap_email,
+            full_name=bootstrap_name,
+            password_hash=hash_password(bootstrap_password),
             role="admin",
             is_active=True,
         )
         db.add(admin)
         db.commit()
+
+        if generated_password:
+            logger.warning(
+                "Bootstrap admin created for empty instance: email=%s password=%s",
+                bootstrap_email,
+                generated_password,
+            )
+        else:
+            logger.warning("Bootstrap admin created for empty instance: email=%s", bootstrap_email)
+    except IntegrityError:
+        db.rollback()
     finally:
         db.close()

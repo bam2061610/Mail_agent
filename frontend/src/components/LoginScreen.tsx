@@ -31,7 +31,7 @@ export function LoginScreen(props: LoginScreenProps) {
               value={props.loginForm.email}
               onChange={(event) => props.onChange({ ...props.loginForm, email: event.target.value })}
               autoComplete="username"
-              placeholder="admin@orhun.local"
+              placeholder="name@example.com"
             />
           </Field>
           <Field label={t("auth.password")} full>
@@ -46,7 +46,7 @@ export function LoginScreen(props: LoginScreenProps) {
           <button className="button button-primary" type="submit" disabled={props.actionLoading === "auth-login"}>
             {props.actionLoading === "auth-login" ? t("auth.signingIn") : t("auth.signin")}
           </button>
-          <p className="helper-text">{t("auth.defaultCreds")}</p>
+          <p className="helper-text">{t("auth.provisioningHint")}</p>
         </form>
       </div>
     </section>

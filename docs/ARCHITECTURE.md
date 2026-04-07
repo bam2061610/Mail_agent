@@ -5,7 +5,13 @@ This document defines the active runtime path to avoid ambiguity.
 ## Canonical entrypoint
 
 - FastAPI app entrypoint: `backend/app/main.py`
-- Startup/lifespan wiring: `backend/app/main.py` (includes table bootstrap, default admin bootstrap, scheduler start/stop)
+- Startup/lifespan wiring: `backend/app/main.py` (includes schema migration bootstrap, optional bootstrap-admin flow, scheduler start/stop)
+
+## Canonical schema path
+
+- Runtime schema bootstrap lives in: `backend/app/db.py`
+- Source-of-truth migration files live in: `backend/alembic/versions/*`
+- Startup applies migrations before the API or worker begins serving.
 
 ## Canonical routing package
 

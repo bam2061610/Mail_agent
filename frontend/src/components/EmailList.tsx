@@ -167,7 +167,7 @@ export function EmailList(props: EmailListProps) {
                     </Badge>
                   ) : null}
                 </div>
-                <p className="email-row-summary">
+                <p className="email-row-summary" title={summary}>
                   {showAiPrefix ? (
                     <span className="email-row-summary-prefix">
                       <Sparkles size={12} aria-hidden="true" />

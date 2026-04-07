@@ -18,10 +18,21 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if _has_column("runtime_settings", "summary_language"):
+        return
     with op.batch_alter_table("runtime_settings", schema=None) as batch_op:
         batch_op.add_column(sa.Column("summary_language", sa.String(length=20), nullable=True))
 
 
 def downgrade() -> None:
+    if not _has_column("runtime_settings", "summary_language"):
+        return
     with op.batch_alter_table("runtime_settings", schema=None) as batch_op:
         batch_op.drop_column("summary_language")
+
+
+def _has_column(table_name: str, column_name: str) -> bool:
+    inspector = sa.inspect(op.get_bind())
+    if table_name not in inspector.get_table_names():
+        return False
+    return column_name in {column["name"] for column in inspector.get_columns(table_name)}

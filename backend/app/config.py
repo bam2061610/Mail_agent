@@ -12,6 +12,7 @@ SECRET_SETTING_KEYS = {
     "imap_password",
     "smtp_password",
     "openai_api_key",
+    "bootstrap_admin_password",
 }
 
 
@@ -21,6 +22,10 @@ class Settings(BaseSettings):
     debug: bool = Field(default=True, alias="DEBUG")
     database_url: str = Field(default=f"sqlite:///{(DATA_DIR / 'mail_agent.db').as_posix()}", alias="DATABASE_URL")
     dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
+    bootstrap_default_admin: bool = Field(default=False, alias="BOOTSTRAP_DEFAULT_ADMIN")
+    bootstrap_admin_email: str = Field(default="admin@orhun.local", alias="BOOTSTRAP_ADMIN_EMAIL")
+    bootstrap_admin_password: str = Field(default="", alias="BOOTSTRAP_ADMIN_PASSWORD")
+    bootstrap_admin_full_name: str = Field(default="Bootstrap Admin", alias="BOOTSTRAP_ADMIN_FULL_NAME")
     imap_host: str = Field(default="", alias="IMAP_HOST")
     imap_port: int = Field(default=993, alias="IMAP_PORT")
     imap_user: str = Field(default="", alias="IMAP_USER")

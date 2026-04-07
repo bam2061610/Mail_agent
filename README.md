@@ -26,12 +26,28 @@ copy ..\.env.example .env
 uvicorn app.main:app --reload
 ```
 
+For a dedicated background worker in a second terminal:
+
+```bash
+cd backend
+python -m app.worker
+```
+
+The API and worker share a process lock, so only one process owns scheduler/watchers at a time. In Docker Compose the API has background jobs disabled and the dedicated `worker` service owns them.
+
 ## What You Get
 
 - `GET /health` returns service status, app name, environment, and server time.
 - `GET /api/emails` returns the current email list from SQLite.
 - `GET /api/emails/{id}` returns one email or `404`.
-- Database tables are created automatically on startup.
+- Schema migrations are applied automatically on startup for the global DB and mailbox account DBs.
+
+Manual schema upgrade:
+
+```bash
+cd backend
+alembic upgrade head
+```
 
 ## Manual IMAP Scan
 
@@ -143,10 +159,12 @@ The app now supports practical multi-user team access with role checks enforced 
 - Audit actions now include acting `user_id` in `action_log` for key operations.
 - Assignment is available for thread/email ownership (`assigned_to_user_id`, `assigned_by_user_id`, `assigned_at`).
 
-Default bootstrap admin (created automatically if no users exist):
+First admin bootstrap is now explicit instead of automatic by default.
 
-- email: `admin@orhun.local`
-- password: `admin123`
+- Set `BOOTSTRAP_DEFAULT_ADMIN=true` in `backend/.env` for the first run only.
+- Set `BOOTSTRAP_ADMIN_PASSWORD=<your-password>` to choose the initial admin password.
+- If `BOOTSTRAP_ADMIN_PASSWORD` is left blank, the backend generates a random password and prints it once in the startup logs.
+- After the first admin is created, set `BOOTSTRAP_DEFAULT_ADMIN=false` again.
 
 Roles:
 
@@ -171,7 +189,7 @@ Admin-only operations are available through `/api/admin/*` and surfaced in the S
 Backup behavior:
 
 - Creates timestamped backup folders under `backend/data/backups/backup_YYYYMMDD_HHMMSS`
-- Backs up SQLite DB and operational JSON config stores (`settings.local.json`, `rules.json`, `templates.json`, `mailboxes.json`, etc.)
+- Backs up the global SQLite DB, mailbox-scoped account DBs under `backend/data/account_dbs/`, and operational JSON config stores
 - Optional attachment-folder backup via `include_attachments=true`
 - Applies simple retention (`keep_last`, default 10)
 
@@ -179,7 +197,7 @@ Restore behavior:
 
 - Requires explicit confirmation text: `RESTORE <backup_name>`
 - Creates an automatic safety backup before restore
-- Restores DB + config files; attachments restore is optional
+- Restores global DB + mailbox account DBs + config files; attachments restore is optional
 - All backup/restore actions are audited in `action_log`
 
 Diagnostics behavior:
@@ -482,6 +500,8 @@ For manual QA, seed realistic demo records:
 cd backend
 python -m app.services.dev_seed
 ```
+
+This dev-only seed also creates demo users with fixed local passwords for QA convenience.
 
 Programmatic usage:
 

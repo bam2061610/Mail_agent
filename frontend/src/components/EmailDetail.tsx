@@ -274,7 +274,9 @@ export function EmailDetail(props: EmailDetailProps) {
               {selected.requires_reply ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
             </div>
           </div>
-          <p className={`detail-summary-copy${summaryText ? "" : " is-fallback"}`}>{summaryText || summaryFallback}</p>
+          <p className={`detail-summary-copy${summaryText ? "" : " is-fallback"}`} title={summaryText || summaryFallback}>
+            {summaryText || summaryFallback}
+          </p>
           {shouldOfferSummaryRefresh ? (
             <button
               className="button button-ghost summary-regenerate"
@@ -420,7 +422,9 @@ export function EmailDetail(props: EmailDetailProps) {
                 </div>
                 <div className="read-preview">
                   <Field label={selected.ai_draft_reply ? t("detail.reply") : t("detail.aiSummary")} full hint={t("detail.replyHint")}>
-                    <p className="read-preview-copy">{selected.ai_draft_reply || summaryText || summaryFallback}</p>
+                  <p className="read-preview-copy" title={selected.ai_draft_reply || summaryText || summaryFallback}>
+                    {selected.ai_draft_reply || summaryText || summaryFallback}
+                  </p>
                   </Field>
                   <div className="detail-meta-grid">
                     <SummaryPoint label={t("detail.to")} value={recipientList.length ? recipientList.join(", ") : "—"} />

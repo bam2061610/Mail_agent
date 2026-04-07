@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import config as app_config
-from app.db import Base, create_tables, get_db
+from app.db import create_tables, get_db
 from app.models.email import Email
 from app.services import (
     attachment_service,
@@ -67,9 +67,6 @@ def db_session(isolated_paths: dict[str, Path], monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(app_db, "SessionLocal", TestSessionLocal)
     app_db._ACCOUNT_ENGINE_CACHE.clear()
     app_db._ACCOUNT_SESSION_CACHE.clear()
-
-    Base.metadata.drop_all(bind=test_engine)
-    Base.metadata.create_all(bind=test_engine)
     create_tables()
 
     session = TestSessionLocal()

@@ -1,17 +1,27 @@
+from __future__ import annotations
+
+import importlib
+import time
 from collections.abc import Generator
 from contextvars import ContextVar, Token
 from pathlib import Path
 
 from fastapi import Request
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import DATA_DIR, settings
+from app.core.process_lock import acquire_process_lock, release_process_lock
 
 Base = declarative_base()
 _CURRENT_MAILBOX_ID: ContextVar[str] = ContextVar("CURRENT_MAILBOX_ID", default="default")
 _ACCOUNT_ENGINE_CACHE: dict[str, object] = {}
 _ACCOUNT_SESSION_CACHE: dict[str, sessionmaker] = {}
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+ALEMBIC_INI_PATH = BACKEND_DIR / "alembic.ini"
+ALEMBIC_SCRIPT_PATH = BACKEND_DIR / "alembic"
+SCHEMA_LOCK_PATH = DATA_DIR / "schema-migrations.lock"
+SCHEMA_LOCK_WAIT_SECONDS = 60.0
 
 
 def _sqlite_connect_args(database_url: str) -> dict[str, bool]:
@@ -41,173 +51,15 @@ def open_global_session():
 
 
 def create_tables() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    sqlite_path = _sqlite_file_path(settings.database_url)
-    if sqlite_path is not None:
-        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-
-    from app.models import (  # noqa: F401
-        action_log,
-        attachment,
-        contact,
-        email,
-        mailbox_account,
-        runtime_setting,
-        session_token,
-        task,
-        user,
-    )
-
-    _ensure_account_tables(engine)
-
-    ensure_account_database("default")
+    _prepare_sqlite_paths()
+    _load_models()
+    lock = _acquire_schema_lock()
     try:
-        from app.services.mailbox_service import list_mailboxes
-
-        for mailbox in list_mailboxes(redact_secrets=False):
-            mailbox_id = str(mailbox.get("id") or "").strip()
-            if mailbox_id:
-                ensure_account_database(mailbox_id)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def _ensure_account_tables(target_engine) -> None:
-    Base.metadata.create_all(bind=target_engine)
-    _ensure_email_columns(target_engine)
-    _ensure_runtime_setting_columns(target_engine)
-    _ensure_task_columns(target_engine)
-    _ensure_attachment_columns(target_engine)
-    _ensure_action_log_columns(target_engine)
-
-
-def _ensure_email_columns(target_engine) -> None:
-    inspector = inspect(target_engine)
-    if "emails" not in inspector.get_table_names():
-        return
-
-    existing_columns = {column["name"] for column in inspector.get_columns("emails")}
-    required_columns = {
-        "folder": "VARCHAR(100) NOT NULL DEFAULT 'inbox'",
-        "direction": "VARCHAR(50) NOT NULL DEFAULT 'inbound'",
-        "status": "VARCHAR(50) NOT NULL DEFAULT 'new'",
-        "action_description": "TEXT",
-        "key_dates_json": "TEXT",
-        "key_amounts_json": "TEXT",
-        "importance_score": "INTEGER DEFAULT NULL",
-        "ai_analyzed": "BOOLEAN NOT NULL DEFAULT 0",
-        "ai_confidence": "FLOAT",
-        "last_reply_sent_at": "DATETIME",
-        "spam_source": "VARCHAR(50)",
-        "spam_reason": "TEXT",
-        "applied_rules_json": "TEXT",
-        "focus_flag": "BOOLEAN NOT NULL DEFAULT 0",
-        "detected_source_language": "VARCHAR(10)",
-        "preferred_reply_language": "VARCHAR(10)",
-        "mailbox_id": "VARCHAR(100)",
-        "mailbox_name": "VARCHAR(255)",
-        "mailbox_address": "VARCHAR(255)",
-        "imap_uid": "VARCHAR(100)",
-        "has_attachments": "BOOLEAN NOT NULL DEFAULT 0",
-        "requires_reply": "BOOLEAN NOT NULL DEFAULT 0",
-        "assigned_to_user_id": "INTEGER",
-        "assigned_by_user_id": "INTEGER",
-        "assigned_at": "DATETIME",
-        "sent_by_user_id": "INTEGER",
-        "sent_review_summary": "TEXT",
-        "sent_review_status": "VARCHAR(50)",
-        "sent_review_issues_json": "TEXT",
-        "sent_review_score": "FLOAT",
-        "sent_review_suggested_improvement": "TEXT",
-        "sent_reviewed_at": "DATETIME",
-    }
-
-    with target_engine.begin() as connection:
-        for column_name, column_sql in required_columns.items():
-            if column_name in existing_columns:
-                continue
-            connection.execute(text(f"ALTER TABLE emails ADD COLUMN {column_name} {column_sql}"))
-
-
-def _ensure_task_columns(target_engine) -> None:
-    inspector = inspect(target_engine)
-    if "tasks" not in inspector.get_table_names():
-        return
-
-    existing_columns = {column["name"] for column in inspector.get_columns("tasks")}
-    required_columns = {
-        "thread_id": "VARCHAR(255)",
-        "followup_started_at": "DATETIME",
-        "expected_reply_by": "DATETIME",
-        "closed_at": "DATETIME",
-        "close_reason": "VARCHAR(255)",
-        "followup_draft": "TEXT",
-        "assigned_to_user_id": "INTEGER",
-        "assigned_by_user_id": "INTEGER",
-        "assigned_at": "DATETIME",
-    }
-
-    with target_engine.begin() as connection:
-        for column_name, column_sql in required_columns.items():
-            if column_name in existing_columns:
-                continue
-            connection.execute(text(f"ALTER TABLE tasks ADD COLUMN {column_name} {column_sql}"))
-
-
-def _ensure_runtime_setting_columns(target_engine) -> None:
-    inspector = inspect(target_engine)
-    if "runtime_settings" not in inspector.get_table_names():
-        return
-
-    existing_columns = {column["name"] for column in inspector.get_columns("runtime_settings")}
-    required_columns = {
-        "ai_auto_spam_enabled": "BOOLEAN",
-        "summary_language": "VARCHAR(20)",
-        "scan_since_date": "VARCHAR(50)",
-        "run_background_jobs": "BOOLEAN",
-        "run_mail_watchers": "BOOLEAN",
-    }
-
-    with target_engine.begin() as connection:
-        for column_name, column_sql in required_columns.items():
-            if column_name in existing_columns:
-                continue
-            connection.execute(text(f"ALTER TABLE runtime_settings ADD COLUMN {column_name} {column_sql}"))
-
-
-def _ensure_attachment_columns(target_engine) -> None:
-    inspector = inspect(target_engine)
-    if "attachments" not in inspector.get_table_names():
-        return
-
-    existing_columns = {column["name"] for column in inspector.get_columns("attachments")}
-    required_columns = {
-        "content_id": "VARCHAR(255)",
-        "is_inline": "BOOLEAN NOT NULL DEFAULT 0",
-    }
-
-    with target_engine.begin() as connection:
-        for column_name, column_sql in required_columns.items():
-            if column_name in existing_columns:
-                continue
-            connection.execute(text(f"ALTER TABLE attachments ADD COLUMN {column_name} {column_sql}"))
-
-
-def _ensure_action_log_columns(target_engine) -> None:
-    inspector = inspect(target_engine)
-    if "action_log" not in inspector.get_table_names():
-        return
-
-    existing_columns = {column["name"] for column in inspector.get_columns("action_log")}
-    required_columns = {
-        "user_id": "INTEGER",
-    }
-
-    with target_engine.begin() as connection:
-        for column_name, column_sql in required_columns.items():
-            if column_name in existing_columns:
-                continue
-            connection.execute(text(f"ALTER TABLE action_log ADD COLUMN {column_name} {column_sql}"))
+        _run_database_migrations(settings.database_url)
+        for mailbox_id in _discover_mailbox_ids():
+            _run_database_migrations(get_account_database_url(mailbox_id))
+    finally:
+        release_process_lock(lock)
 
 
 def get_current_mailbox_id() -> str:
@@ -238,11 +90,13 @@ def get_account_database_url(mailbox_id: str | None = None) -> str:
 
 def ensure_account_database(mailbox_id: str | None = None) -> None:
     mailbox_id = str(mailbox_id or get_current_mailbox_id()).strip() or "default"
-    session = open_account_session(mailbox_id)
+    _prepare_sqlite_paths()
+    _load_models()
+    lock = _acquire_schema_lock()
     try:
-        session.close()
+        _run_database_migrations(get_account_database_url(mailbox_id))
     finally:
-        pass
+        release_process_lock(lock)
 
 
 def list_account_database_ids() -> list[str]:
@@ -266,6 +120,7 @@ def open_account_session(mailbox_id: str | None = None):
     cache_key = get_account_database_url(mailbox_id)
     session_factory = _ACCOUNT_SESSION_CACHE.get(cache_key)
     if session_factory is None:
+        ensure_account_database(mailbox_id)
         account_engine = _ACCOUNT_ENGINE_CACHE.get(cache_key)
         if account_engine is None:
             account_path = _account_database_path(mailbox_id)
@@ -275,7 +130,6 @@ def open_account_session(mailbox_id: str | None = None):
                 connect_args=_sqlite_connect_args(cache_key),
             )
             _ACCOUNT_ENGINE_CACHE[cache_key] = account_engine
-        _ensure_account_tables(account_engine)
         session_factory = sessionmaker(autocommit=False, autoflush=False, bind=account_engine)
         _ACCOUNT_SESSION_CACHE[cache_key] = session_factory
     return session_factory()
@@ -325,3 +179,64 @@ def dispose_database_engines() -> None:
 
     _ACCOUNT_ENGINE_CACHE.clear()
     _ACCOUNT_SESSION_CACHE.clear()
+
+
+def _prepare_sqlite_paths() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    sqlite_path = _sqlite_file_path(settings.database_url)
+    if sqlite_path is not None:
+        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    _account_db_root().mkdir(parents=True, exist_ok=True)
+
+
+def _load_models() -> None:
+    from app.models import (  # noqa: F401
+        action_log,
+        attachment,
+        contact,
+        email,
+        mailbox_account,
+        runtime_setting,
+        session_token,
+        task,
+        user,
+    )
+
+
+def _discover_mailbox_ids() -> list[str]:
+    mailbox_ids = ["default"]
+    try:
+        from app.services.mailbox_service import list_mailboxes
+
+        for mailbox in list_mailboxes(redact_secrets=False):
+            mailbox_id = str(mailbox.get("id") or "").strip()
+            if mailbox_id and mailbox_id not in mailbox_ids:
+                mailbox_ids.append(mailbox_id)
+    except Exception:  # noqa: BLE001
+        pass
+    return mailbox_ids
+
+
+def _run_database_migrations(database_url: str) -> None:
+    sqlite_path = _sqlite_file_path(database_url)
+    if sqlite_path is not None:
+        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+
+    alembic_command = importlib.import_module("alembic.command")
+    alembic_config = importlib.import_module("alembic.config")
+
+    config = alembic_config.Config(str(ALEMBIC_INI_PATH))
+    config.set_main_option("script_location", str(ALEMBIC_SCRIPT_PATH))
+    config.set_main_option("sqlalchemy.url", database_url)
+    alembic_command.upgrade(config, "head")
+
+
+def _acquire_schema_lock():
+    deadline = time.monotonic() + SCHEMA_LOCK_WAIT_SECONDS
+    while True:
+        lock = acquire_process_lock(SCHEMA_LOCK_PATH)
+        if lock.acquired:
+            return lock
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Timed out waiting for schema migration lock: {SCHEMA_LOCK_PATH}")
+        time.sleep(0.1)
