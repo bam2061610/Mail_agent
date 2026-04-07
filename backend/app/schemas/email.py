@@ -14,6 +14,7 @@ class EmailListItem(BaseModel):
     mailbox_id: str | None = None
     mailbox_name: str | None = None
     mailbox_address: str | None = None
+    imap_uid: str | None = None
     date_received: datetime | None = None
     status: str
     priority: str | None = None
@@ -53,6 +54,7 @@ class EmailDetail(EmailListItem):
     thread_id: str | None = None
     recipients_json: str | None = None
     cc_json: str | None = None
+    imap_uid: str | None = None
     body_html: str | None = None
     folder: str
     direction: str
@@ -75,6 +77,11 @@ class EmailUpdateStatusRequest(BaseModel):
 
 class EmailStatusUpdateRequest(BaseModel):
     status: str
+
+
+class EmailReplyLaterRequest(BaseModel):
+    snooze_until: datetime | None = None
+    interval_minutes: int | None = None
 
 
 class EmailReplyRequest(BaseModel):
@@ -158,6 +165,10 @@ class EmailRewriteDraftRequest(BaseModel):
 
 class EmailSetReplyLanguageRequest(BaseModel):
     language: str
+
+
+class EmailRegenerateSummaryRequest(BaseModel):
+    target_language: str
 
 
 class DraftGenerationResponse(BaseModel):

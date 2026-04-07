@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.models.attachment import Attachment
 from app.models.email import Email
 from app.services.attachment_service import ParsedAttachment, save_attachments
-from app.services.imap_scanner import _imap_date_criterion, _is_older_than_cutoff
+from app.services.imap_scanner import _imap_date_criterion, _is_older_than_cutoff, _resolve_scan_since_cutoff
 from app.services.retention_service import cleanup_email_retention
 
 
@@ -21,6 +22,13 @@ def test_imap_scan_window_uses_last_day(monkeypatch):
     monkeypatch.setattr(imap_scanner, "datetime", FrozenDatetime)
 
     assert _imap_date_criterion() == "SINCE 01-Apr-2026"
+
+
+def test_imap_scan_window_uses_saved_scan_since_date():
+    settings = SimpleNamespace(scan_since_date="2026-04-01T00:00:00Z")
+    cutoff = _resolve_scan_since_cutoff(settings)
+    assert cutoff == datetime(2026, 4, 1, 0, 0, tzinfo=timezone.utc)
+    assert _imap_date_criterion(cutoff) == "SINCE 01-Apr-2026"
 
 
 def test_scan_window_boundary_helper_is_strict():

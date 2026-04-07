@@ -35,6 +35,8 @@ class RuntimeSetting(Base):
     catchup_absence_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sent_review_batch_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     interface_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    summary_language: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scan_since_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
     signature: Mapped[str | None] = mapped_column(Text, nullable=True)
     cors_origins_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

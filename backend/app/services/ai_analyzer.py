@@ -19,6 +19,8 @@ from app.services.deepseek_client import (
     call_deepseek_chat,
 )
 from app.services.language_service import choose_reply_language, normalize_language, update_email_languages
+from app.services.imap_folder_service import move_email as move_email_on_server
+from app.services.mailbox_service import get_default_runtime_mailbox_from_settings, get_outgoing_mailbox_for_email
 from app.services.preference_profile import build_preference_prompt_block, get_preference_profile
 from app.services.rule_engine import apply_rules_to_email, is_trusted_sender
 from app.services.template_service import get_template, render_template_context
@@ -27,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 VALID_PRIORITIES = {"critical", "high", "medium", "low", "spam"}
 VALID_CATEGORIES = {"RFQ", "Invoice", "Logistics", "Support", "Spam", "Other"}
+SUMMARY_LANGUAGE_NAMES = {
+    "ru": "Russian",
+    "en": "English",
+    "tr": "Turkish",
+}
 
 
 class AnalysisResult(BaseModel):
@@ -44,6 +51,8 @@ class AnalysisResult(BaseModel):
     key_amounts: list[str] = []
     draft_reply: str | None = None
     confidence: float | None = None
+    is_spam: bool = False
+    spam_reason: str | None = None
 
     @field_validator("priority", mode="before")
     @classmethod
@@ -125,6 +134,29 @@ class AnalysisResult(BaseModel):
             return None
         return max(0.0, min(1.0, confidence))
 
+    @field_validator("is_spam", mode="before")
+    @classmethod
+    def normalize_is_spam(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "y"}:
+                return True
+            if normalized in {"false", "0", "no", "n"}:
+                return False
+        return bool(value)
+
+    @field_validator("spam_reason", mode="before")
+    @classmethod
+    def normalize_spam_reason(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return str(value)
+
     @model_validator(mode="after")
     def ensure_summary_block(self) -> "AnalysisResult":
         if self.summary != "No summary generated.":
@@ -179,16 +211,22 @@ class DraftResponse(BaseModel):
         return normalized or "ru"
 
 
-def build_system_prompt(config, preference_block: str | None = None) -> str:
-    language_code = normalize_language(getattr(config, "interface_language", None)) or "ru"
-    language_name = {"ru": "Russian", "en": "English", "tr": "Turkish"}.get(language_code, "Russian")
+def _summary_language_name(value: str | None, fallback: str = "ru") -> str:
+    normalized = normalize_language(value) or fallback
+    return SUMMARY_LANGUAGE_NAMES.get(normalized, SUMMARY_LANGUAGE_NAMES[fallback])
+
+
+def build_system_prompt(config, preference_block: str | None = None, *, summary_language: str | None = None) -> str:
+    summary_language_name = _summary_language_name(
+        summary_language or getattr(config, "summary_language", None) or getattr(config, "interface_language", None)
+    )
     base_prompt = (
         "You are an email assistant for Orhun Medical, a network of medical centers "
         "in Kazakhstan. You analyze incoming emails and provide structured analysis. "
         "The company receives emails from medical equipment suppliers, logistics "
-        "companies, and partners. The primary language of correspondence is Russian "
-        "and English. Always respond in JSON format only, no markdown, no preamble. "
-        f"Write the summary and draft reply in {language_name}. "
+        "companies, and partners. Always respond in JSON format only, no markdown, no preamble. "
+        f"Write the summary in {summary_language_name}. Supported languages: Russian, English, Turkish. "
+        "If you include a draft reply, write it in the same language as the summary. "
         "The summary must clearly cover who is writing, to whom, the core request or offer, "
         "and what action is required. "
         "Rate this email's importance from 1 to 10: "
@@ -196,16 +234,27 @@ def build_system_prompt(config, preference_block: str | None = None) -> str:
         "7-9 = important, needs reply within 24h; "
         "4-6 = normal business correspondence; "
         "1-3 = informational, no action needed (newsletters, notifications). "
-        'Return the score as JSON field "importance_score".'
+        'Return the score as JSON field "importance_score". '
+        "Also classify spam. Mark `is_spam` true for obvious spam, marketing blasts, phishing, "
+        "mass promotional mailings with unsubscribe links, tracking pixels, or UTM parameters, "
+        "promotional offers the user did not request, and phishing patterns. "
+        'Return `is_spam` as a JSON boolean and explain it in JSON field "spam_reason".'
     )
     if preference_block:
         return f"{base_prompt}\n\n{preference_block}"
     return base_prompt
 
 
-def build_user_payload(email_record: Email, thread_history: list[Email], *, interface_language: str | None = None) -> str:
+def build_user_payload(
+    email_record: Email,
+    thread_history: list[Email],
+    *,
+    interface_language: str | None = None,
+    summary_language: str | None = None,
+) -> str:
     payload = {
         "interface_language": normalize_language(interface_language) or "ru",
+        "summary_language": normalize_language(summary_language) or normalize_language(interface_language) or "ru",
         "current_email": {
             "id": email_record.id,
             "subject": email_record.subject,
@@ -230,7 +279,7 @@ def build_user_payload(email_record: Email, thread_history: list[Email], *, inte
             for item in thread_history
         ],
         "expected_json_schema": {
-            "summary": "concise summary in the interface language",
+            "summary": "concise summary in the selected summary language",
             "who_is_writing": "who sent the message",
             "to_whom": "who the message is addressed to",
             "core_request": "core request or offer",
@@ -243,6 +292,8 @@ def build_user_payload(email_record: Email, thread_history: list[Email], *, inte
             "key_dates": ["2026-04-03"],
             "key_amounts": ["$5000"],
             "draft_reply": "reply draft text or null",
+            "is_spam": False,
+            "spam_reason": "why the message is spam or null",
         },
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -253,9 +304,15 @@ def analyze_email(
     thread_history: list[Email],
     config,
     preference_block: str | None = None,
+    summary_language: str | None = None,
 ) -> AnalysisResult:
-    system_prompt = build_system_prompt(config, preference_block=preference_block)
-    user_payload = build_user_payload(email_record, thread_history, interface_language=getattr(config, "interface_language", None))
+    system_prompt = build_system_prompt(config, preference_block=preference_block, summary_language=summary_language)
+    user_payload = build_user_payload(
+        email_record,
+        thread_history,
+        interface_language=getattr(config, "interface_language", None),
+        summary_language=summary_language or getattr(config, "summary_language", None),
+    )
     last_error: Exception | None = None
 
     for attempt in range(1, max(1, config.ai_max_retries) + 1):
@@ -281,6 +338,23 @@ def analyze_email(
             time.sleep(min(2 * attempt, 5))
 
     raise RuntimeError(f"DeepSeek analysis failed after retries: {last_error}")
+
+
+def regenerate_email_summary(
+    email_record: Email,
+    thread_history: list[Email],
+    config,
+    summary_language: str | None = None,
+    preference_block: str | None = None,
+) -> str:
+    result = analyze_email(
+        email_record,
+        thread_history,
+        config,
+        preference_block=preference_block,
+        summary_language=summary_language,
+    )
+    return result.summary
 
 
 def generate_followup_draft(
@@ -356,7 +430,13 @@ def analyze_pending(db_session: Session, config, limit: int | None = None) -> An
 
         thread_history = _load_thread_history(db_session, email_record)
         try:
-            result = analyze_email(email_record, thread_history, config, preference_block=preference_block)
+            result = analyze_email(
+                email_record,
+                thread_history,
+                config,
+                preference_block=preference_block,
+                summary_language=getattr(config, "summary_language", None),
+            )
             save_analysis_result(db_session, email_record, result, config=config)
             analyzed_count += 1
         except Exception as exc:  # noqa: BLE001
@@ -405,25 +485,54 @@ def save_analysis_result(db_session: Session, email_record: Email, analysis_resu
                     ),
                 )
             )
-    ai_marked_spam = analysis_result.category == "Spam" or analysis_result.priority == "spam"
-    auto_spam_enabled = bool(getattr(config, "ai_auto_spam_enabled", False))
-    if ai_marked_spam and auto_spam_enabled and not is_trusted_sender(email_record):
-        email_record.is_spam = True
-        email_record.status = "spam"
-        email_record.spam_source = "ai"
-        email_record.spam_reason = f"AI classified as {analysis_result.category or analysis_result.priority}"
-    elif email_record.spam_source == "ai":
+    apply_rules_to_email(db_session, email_record, source="ai")
+    ai_marked_spam = analysis_result.is_spam or analysis_result.category == "Spam" or analysis_result.priority == "spam"
+    auto_spam_enabled = _auto_spam_enabled(config)
+    if ai_marked_spam and auto_spam_enabled and not is_trusted_sender(email_record) and not email_record.is_spam:
+        _mark_email_as_auto_spam(email_record, analysis_result)
+    elif email_record.spam_source == "ai_auto" and not ai_marked_spam:
         email_record.is_spam = False
+        email_record.status = "new"
         email_record.spam_source = None
         email_record.spam_reason = None
+        email_record.folder = "INBOX"
     email_record.ai_analyzed = True
     if analysis_result.confidence is not None:
         email_record.ai_confidence = analysis_result.confidence
     db_session.add(email_record)
     db_session.flush()
-    apply_rules_to_email(db_session, email_record, source="ai")
     db_session.commit()
     db_session.refresh(email_record)
+
+
+def _auto_spam_enabled(config) -> bool:
+    if config is None:
+        return False
+    if hasattr(config, "auto_spam_enabled"):
+        return bool(getattr(config, "auto_spam_enabled", False))
+    return bool(getattr(config, "ai_auto_spam_enabled", False))
+
+
+def _mark_email_as_auto_spam(email_record: Email, analysis_result: AnalysisResult) -> None:
+    source_folder = email_record.folder
+    mailbox_config = get_outgoing_mailbox_for_email(email_record) or get_default_runtime_mailbox_from_settings()
+    if mailbox_config is None:
+        raise RuntimeError("No mailbox configuration available for IMAP spam move")
+
+    email_record.is_spam = True
+    email_record.status = "spam"
+    email_record.spam_source = "ai_auto"
+    email_record.spam_reason = analysis_result.spam_reason or f"AI classified as {analysis_result.category or analysis_result.priority}"
+    email_record.folder = "Spam"
+
+    result = move_email_on_server(
+        mailbox_config,
+        email_record.imap_uid,
+        "spam",
+        source_folder=source_folder,
+        message_id=email_record.message_id,
+    )
+    email_record.imap_uid = result.target_uid or result.source_uid or email_record.imap_uid
 
 
 def generate_personalized_draft(

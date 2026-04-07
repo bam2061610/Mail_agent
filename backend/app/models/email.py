@@ -14,6 +14,7 @@ class Email(Base):
     mailbox_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     mailbox_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mailbox_address: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    imap_uid: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     subject: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sender_email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)

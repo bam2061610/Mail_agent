@@ -62,7 +62,7 @@ def record_decision_feedback(
         elif verdict in {"restore_spam", "disagree"}:
             email.is_spam = False
             if email.status == "spam":
-                email.status = "read"
+                email.status = "new"
             created_events.append("ai_spam_restored")
     elif decision_type == "priority":
         old_priority = email.priority

@@ -11,6 +11,7 @@ from email.utils import getaddresses, parsedate_to_datetime, parseaddr
 
 from sqlalchemy.orm import Session
 
+from app.config import get_effective_settings
 from app.models.email import Email
 from app.models.action_log import ActionLog
 from app.db import open_account_session
@@ -43,6 +44,7 @@ class ParsedEmailMessage:
     body_text: str | None
     body_html: str | None
     attachments: list[ParsedAttachment]
+    imap_uid: str | None = None
     folder: str = "INBOX"
     direction: str = "inbound"
     fallback_message_id_used: bool = False
@@ -87,10 +89,40 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
 MAX_INITIAL_SCAN_DAYS = 1
 
 
-def _imap_date_criterion(days_back: int = MAX_INITIAL_SCAN_DAYS) -> str:
-    """Return IMAP SINCE criterion for the last N days."""
-    since_date = datetime.now(timezone.utc) - timedelta(days=days_back)
-    return f'SINCE {since_date.strftime("%d-%b-%Y")}'
+def _parse_scan_since_date(raw_value) -> datetime | None:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, datetime):
+        value = raw_value
+    else:
+        text = str(raw_value).strip()
+        if not text:
+            return None
+        try:
+            value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _resolve_scan_since_cutoff(settings) -> datetime:
+    raw_value = getattr(settings, "scan_since_date", None)
+    if raw_value is None and not hasattr(settings, "scan_since_date"):
+        raw_value = getattr(get_effective_settings(), "scan_since_date", None)
+
+    parsed = _parse_scan_since_date(raw_value)
+    if parsed is not None:
+        return parsed
+    return datetime.now(timezone.utc) - timedelta(hours=24)
+
+
+def _imap_date_criterion(cutoff: datetime | None = None) -> str:
+    """Return IMAP SINCE criterion for the configured scan start date."""
+    effective_cutoff = cutoff or (datetime.now(timezone.utc) - timedelta(hours=24))
+    return f'SINCE {effective_cutoff.strftime("%d-%b-%Y")}'
 
 
 def _is_older_than_cutoff(date_received: datetime | None, cutoff: datetime) -> bool:
@@ -112,6 +144,7 @@ def _scan_folder(
     mailbox_name: str | None,
     mailbox_address: str | None,
     existing_message_ids: set[str],
+    scan_cutoff: datetime,
     direction: str = "inbound",
 ) -> tuple[int, int, int, int, list[str]]:
     """Scan a single IMAP folder. Returns (scanned, fetched, created, skipped, errors)."""
@@ -120,8 +153,6 @@ def _scan_folder(
     fetched_messages = 0
     created_count = 0
     skipped_count = 0
-    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_INITIAL_SCAN_DAYS)
-
     try:
         status, _ = connection.select(folder, readonly=True)
         if status != "OK":
@@ -129,7 +160,7 @@ def _scan_folder(
     except imaplib.IMAP4.error:
         return 0, 0, 0, 0, [f"Folder {folder} does not exist or is not accessible"]
 
-    search_criterion = _imap_date_criterion()
+    search_criterion = _imap_date_criterion(scan_cutoff)
     status, data = connection.search(None, search_criterion)
     if status != "OK":
         return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
@@ -147,7 +178,8 @@ def _scan_folder(
             raw_message = _fetch_full_message(connection, uid)
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
-            if _is_older_than_cutoff(parsed_message.date_received, retention_cutoff):
+            parsed_message.imap_uid = uid.decode("utf-8", errors="ignore") or None
+            if _is_older_than_cutoff(parsed_message.date_received, scan_cutoff):
                 skipped_count += 1
                 continue
             if direction == "sent":
@@ -218,12 +250,13 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
     mailbox_name = getattr(settings, "name", None)
     mailbox_address = getattr(settings, "email_address", None)
     existing_message_ids = _load_existing_message_ids(db_session, mailbox_id)
+    scan_cutoff = _resolve_scan_since_cutoff(settings)
 
     try:
         # Scan INBOX (inbound)
         s, f, c, sk, errs = _scan_folder(
             connection, db_session, "INBOX", str(mailbox_id),
-            mailbox_name, mailbox_address, existing_message_ids, direction="inbound",
+            mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="inbound",
         )
         scanned_messages += s
         fetched_messages += f
@@ -236,7 +269,7 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
         if sent_folder:
             s, f, c, sk, errs = _scan_folder(
                 connection, db_session, sent_folder, str(mailbox_id),
-                mailbox_name, mailbox_address, existing_message_ids, direction="sent",
+                mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="sent",
             )
             scanned_messages += s
             fetched_messages += f
@@ -436,6 +469,10 @@ def save_parsed_email(
         .first()
     )
     if existing_email is not None:
+        if parsed_message.imap_uid and existing_email.imap_uid != parsed_message.imap_uid:
+            existing_email.imap_uid = parsed_message.imap_uid
+            db_session.add(existing_email)
+            db_session.commit()
         return SaveEmailResult(
             status="skipped",
             email_id=existing_email.id,
@@ -456,6 +493,7 @@ def save_parsed_email(
         mailbox_id=mailbox_id,
         mailbox_name=mailbox_name,
         mailbox_address=(mailbox_address or "").lower() or None,
+        imap_uid=parsed_message.imap_uid,
         thread_id=resolved_thread_id,
         subject=parsed_message.subject,
         sender_email=parsed_message.sender_email,

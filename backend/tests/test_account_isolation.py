@@ -15,19 +15,23 @@ def test_mailbox_accounts_use_isolated_sqlite_databases(db_session, isolated_pat
 
     token_a = set_current_mailbox_id(mailbox_a)
     try:
-        save_runtime_settings({"signature": "Signature A", "interface_language": "en"})
+        save_runtime_settings({"signature": "Signature A", "interface_language": "en", "summary_language": "en", "scan_since_date": "2026-04-01T00:00:00Z"})
         settings_a = load_runtime_settings()
         assert settings_a["signature"] == "Signature A"
         assert settings_a["interface_language"] == "en"
+        assert settings_a["summary_language"] == "en"
+        assert settings_a["scan_since_date"] == "2026-04-01T00:00:00Z"
     finally:
         reset_current_mailbox_id(token_a)
 
     token_b = set_current_mailbox_id(mailbox_b)
     try:
-        save_runtime_settings({"signature": "Signature B", "interface_language": "ru"})
+        save_runtime_settings({"signature": "Signature B", "interface_language": "ru", "summary_language": "ru", "scan_since_date": "2026-04-02T00:00:00Z"})
         settings_b = load_runtime_settings()
         assert settings_b["signature"] == "Signature B"
         assert settings_b["interface_language"] == "ru"
+        assert settings_b["summary_language"] == "ru"
+        assert settings_b["scan_since_date"] == "2026-04-02T00:00:00Z"
     finally:
         reset_current_mailbox_id(token_b)
 

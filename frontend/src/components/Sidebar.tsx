@@ -13,6 +13,7 @@ const ITEMS: Array<{ key: MailView; labelKey: string; short: string }> = [
   { key: "inbox", labelKey: "nav.inbox", short: "Inbox" },
   { key: "sent", labelKey: "nav.sent", short: "Sent" },
   { key: "spam", labelKey: "nav.spam", short: "Spam" },
+  { key: "processed", labelKey: "nav.processed", short: "Processed" },
   { key: "settings", labelKey: "nav.settings", short: "Settings" },
 ];
 

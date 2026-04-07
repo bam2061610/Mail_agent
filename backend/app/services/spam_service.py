@@ -52,7 +52,7 @@ def restore_email_from_spam(db_session: Session, email: Email, actor: str = "use
         actor=actor,
     )
     email.is_spam = False
-    email.status = "read"
+    email.status = "new"
     email.spam_source = None
     email.spam_reason = None
     email.updated_at = datetime.now(timezone.utc)

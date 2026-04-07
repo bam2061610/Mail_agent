@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Archive, Ban, Clock, Sparkles } from "lucide-react";
 import type { AttachmentItem, EmailItem } from "../types";
@@ -23,6 +23,7 @@ type EmailDetailProps = {
   replySubject: string;
   replyPrompt: string;
   replySignature: string;
+  summaryLanguage: "ru" | "en" | "tr";
   onClose: () => void;
   onModeChange: (mode: "read" | "reply") => void;
   onDraftChange: (value: string) => void;
@@ -36,6 +37,7 @@ type EmailDetailProps = {
   onGenerateDraft: () => void;
   onTranslateDraft: (lang: "ru" | "en" | "tr") => void;
   onSendReply: () => void;
+  onRegenerateSummary: () => void;
   onArchive: () => void;
   onSpam: () => void;
   onReplyLater: () => void;
@@ -48,19 +50,26 @@ function splitValue(value: string): string[] {
     .filter(Boolean);
 }
 
+function normalizeLanguageCode(value?: string | null): "ru" | "en" | "tr" | null {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "ru" || normalized === "russian") return "ru";
+  if (normalized === "en" || normalized === "english") return "en";
+  if (normalized === "tr" || normalized === "turkish") return "tr";
+  return null;
+}
+
 export function EmailDetail(props: EmailDetailProps) {
   const { t } = useTranslation();
+  const [showOriginal, setShowOriginal] = useState(false);
 
   const summaryText = useMemo(
     () => props.selectedEmail?.ai_summary || props.thread.find((item) => item.ai_summary)?.ai_summary || "",
     [props.selectedEmail, props.thread]
   );
 
-  const quoteText = useMemo(() => {
-    const selected = props.selectedEmail;
-    if (!selected) return "";
-    return selected.body_text || selected.body_html || "";
-  }, [props.selectedEmail]);
+  useEffect(() => {
+    setShowOriginal(false);
+  }, [props.selectedEmail?.id, props.mode]);
 
   const selected = props.selectedEmail;
   const isOutbound = selected ? selected.direction === "sent" || selected.direction === "outbound" : false;
@@ -69,6 +78,12 @@ export function EmailDetail(props: EmailDetailProps) {
   const bccList = splitValue(props.replyBcc);
   const attachmentCount = props.attachments.length || selected?.attachment_count || 0;
   const summaryFallback = selected && !selected.ai_analyzed ? t("queue.analyzing") : t("detail.noAnalysis");
+  const originalHtml = selected?.body_html || "";
+  const originalText = selected?.body_text || "";
+  const hasOriginal = Boolean(originalHtml || originalText);
+  const detectedLanguage = normalizeLanguageCode(selected?.detected_source_language);
+  const shouldOfferSummaryRefresh = Boolean(selected?.ai_summary && detectedLanguage && detectedLanguage !== props.summaryLanguage);
+  const summaryLanguageLabelKey = props.summaryLanguage === "ru" ? "settings.russian" : props.summaryLanguage === "tr" ? "settings.turkish" : "settings.english";
 
   if (!props.open) {
     return (
@@ -181,6 +196,40 @@ export function EmailDetail(props: EmailDetailProps) {
     </section>
   );
 
+  const originalMessageSection = (
+    <section className="detail-section-card original-message-panel">
+      <div className="section-title-row">
+        <h4 className="section-title">{t("detail.originalMessage")}</h4>
+        <button
+          className="button button-ghost original-message-toggle"
+          type="button"
+          aria-expanded={showOriginal}
+          onClick={() => setShowOriginal((current) => !current)}
+        >
+          {showOriginal ? t("detail.hideOriginal") : t("detail.showOriginal")}
+        </button>
+      </div>
+      {showOriginal ? (
+        hasOriginal ? (
+          originalHtml ? (
+            <iframe
+              title={t("detail.originalMessage")}
+              srcDoc={originalHtml}
+              className="original-message-frame"
+              style={{ maxHeight: "400px", overflow: "auto", width: "100%", border: "1px solid var(--line)", height: "400px" }}
+            />
+          ) : (
+            <pre className="original-message-text" style={{ maxHeight: "400px", overflowY: "auto", whiteSpace: "pre-wrap" }}>
+              {originalText}
+            </pre>
+          )
+        ) : (
+          <p className="helper-text">{t("queue.noPreview")}</p>
+        )
+      ) : null}
+    </section>
+  );
+
   return (
     <section
       className="detail-panel email-detail-panel"
@@ -222,6 +271,18 @@ export function EmailDetail(props: EmailDetailProps) {
             </div>
           </div>
           <p className={`detail-summary-copy${summaryText ? "" : " is-fallback"}`}>{summaryText || summaryFallback}</p>
+          {shouldOfferSummaryRefresh ? (
+            <button
+              className="button button-ghost summary-regenerate"
+              type="button"
+              onClick={props.onRegenerateSummary}
+              disabled={props.actionLoading === "summary"}
+            >
+              {props.actionLoading === "summary"
+                ? t("detail.generating")
+                : t("detail.regenerateSummary", { language: t(summaryLanguageLabelKey) })}
+            </button>
+          ) : null}
           <div className="summary-grid">
             <SummaryPoint label={t("detail.reply")} value={props.replyLanguage.toUpperCase()} />
             <SummaryPoint label={t("detail.attachmentsTitle")} value={attachmentCount} />
@@ -244,7 +305,7 @@ export function EmailDetail(props: EmailDetailProps) {
                 </div>
               </div>
 
-              <div className="compose-panel">
+                <div className="compose-panel">
                 <div className="compose-toolbar">
                   <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("ru")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
                     {t("detail.translateRu")}
@@ -308,13 +369,7 @@ export function EmailDetail(props: EmailDetailProps) {
                   <textarea rows={4} value={props.replySignature} onChange={(event) => props.onReplySignatureChange(event.target.value)} placeholder={t("detail.signaturePlaceholder")} />
                 </Field>
 
-                <div className="quote-block">
-                  <div className="section-title-row">
-                    <h5>{t("detail.originalMessage")}</h5>
-                    <Badge tone="neutral">{t("detail.includeOriginal")}</Badge>
-                  </div>
-                  <blockquote>{quoteText || t("queue.noPreview")}</blockquote>
-                </div>
+                {originalMessageSection}
 
                 <div className="compose-actions">
                   <button className="button button-ghost" type="button" onClick={props.onArchive}>
@@ -360,8 +415,8 @@ export function EmailDetail(props: EmailDetailProps) {
                   </button>
                 </div>
                 <div className="read-preview">
-                  <Field label={selected.ai_draft_reply ? t("detail.reply") : t("detail.originalMessage")} full hint={t("detail.replyHint")}>
-                    <p className="read-preview-copy">{selected.ai_draft_reply || selected.body_text || selected.body_html || t("queue.noPreview")}</p>
+                  <Field label={selected.ai_draft_reply ? t("detail.reply") : t("detail.aiSummary")} full hint={t("detail.replyHint")}>
+                    <p className="read-preview-copy">{selected.ai_draft_reply || summaryText || summaryFallback}</p>
                   </Field>
                   <div className="detail-meta-grid">
                     <SummaryPoint label={t("detail.to")} value={recipientList.length ? recipientList.join(", ") : "—"} />
@@ -369,6 +424,7 @@ export function EmailDetail(props: EmailDetailProps) {
                     <SummaryPoint label={t("detail.bcc")} value={bccList.length ? bccList.join(", ") : "—"} />
                   </div>
                 </div>
+                {originalMessageSection}
               </div>
             </section>
           </div>

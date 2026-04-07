@@ -84,8 +84,10 @@ class SettingsResponse(BaseModel):
     deepseek_base_url: str
     deepseek_model: str
     interface_language: str
+    summary_language: str
+    scan_since_date: str | None
     signature: str
-    ai_auto_spam_enabled: bool
+    auto_spam_enabled: bool
     scan_interval_minutes: int
     followup_overdue_days: int
     catchup_absence_hours: int
@@ -113,7 +115,10 @@ class SettingsUpdateRequest(BaseModel):
     deepseek_base_url: str | None = None
     deepseek_model: str | None = None
     interface_language: str | None = None
+    summary_language: str | None = None
+    scan_since_date: str | None = None
     signature: str | None = None
+    auto_spam_enabled: bool | None = None
     ai_auto_spam_enabled: bool | None = None
     openai_api_key: str | None = None
     scan_interval_minutes: int | None = None

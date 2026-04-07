@@ -17,6 +17,7 @@ def _parsed(**kwargs):
         "body_text": "text",
         "body_html": None,
         "attachments": [],
+        "imap_uid": None,
         "folder": "INBOX",
         "direction": "inbound",
         "fallback_message_id_used": False,

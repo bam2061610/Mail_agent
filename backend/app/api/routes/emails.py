@@ -25,12 +25,14 @@ from app.schemas.email import (
     FeedbackResponse,
     EmailListItem,
     EmailReplyRequest,
+    EmailReplyLaterRequest,
+    EmailRegenerateSummaryRequest,
     EmailStatusUpdateRequest,
     EmailThreadResponse,
     DraftFeedbackRequest,
 )
 from app.schemas.system import ErrorResponse
-from app.services.ai_analyzer import generate_personalized_draft, rewrite_draft
+from app.services.ai_analyzer import generate_personalized_draft, regenerate_email_summary, rewrite_draft
 from app.services.deepseek_client import DeepSeekError, DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekTimeoutError
 from app.services.attachment_service import (
     build_attachment_download_payload,
@@ -46,7 +48,7 @@ from app.services.preference_profile import build_preference_prompt_block, get_p
 from app.services.spam_service import annotate_spam_review_metadata, confirm_email_spam, restore_email_from_spam
 from app.services.mail.smtp_send import send_reply
 from app.services.language_service import normalize_language
-from app.services.imap_mailbox_actions import archive_email_via_imap, move_email_via_imap, reply_later_email_via_imap, spam_email_via_imap
+from app.services.imap_folder_service import move_email as move_email_on_server, move_to_inbox as move_email_to_inbox
 from app.services.mailbox_service import (
     SENT_DIRECTION_VALUES,
     get_default_runtime_mailbox_from_settings,
@@ -67,9 +69,16 @@ from app.services.sent_review_service import (
 from app.services.template_service import get_template
 
 router = APIRouter(prefix="/api/emails", tags=["emails"])
-ALLOWED_STATUSES = {"new", "read", "archived", "spam", "replied", "reply_later"}
+ALLOWED_STATUSES = {"new", "read", "archived", "spam", "replied", "reply_later", "processed"}
 INBOUND_DIRECTION_VALUES = ("inbound", "incoming", "received")
 logger = logging.getLogger(__name__)
+STATUS_LOCAL_FOLDERS = {
+    "archived": "Archive",
+    "spam": "Spam",
+    "processed": "Processed",
+    "reply_later": "Reply Later",
+    "new": "INBOX",
+}
 
 
 def _resolve_runtime_mailbox_for_email(email: Email):
@@ -78,6 +87,33 @@ def _resolve_runtime_mailbox_for_email(email: Email):
         if mailbox is not None:
             return to_runtime_mailbox(mailbox)
     return get_default_runtime_mailbox_from_settings()
+
+
+def _move_email_on_server(mailbox_config, email: Email, target_kind: str, source_folder: str | None) -> None:
+    if mailbox_config is None:
+        logger.warning("Mailbox configuration missing; skipping IMAP move for email_id=%s", email.id)
+        return
+
+    try:
+        if target_kind == "inbox":
+            result = move_email_to_inbox(
+                mailbox_config,
+                email.imap_uid,
+                source_folder=source_folder,
+                message_id=email.message_id,
+            )
+        else:
+            result = move_email_on_server(
+                mailbox_config,
+                email.imap_uid,
+                target_kind,
+                source_folder=source_folder,
+                message_id=email.message_id,
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"IMAP action failed: {exc}") from exc
+
+    email.imap_uid = result.target_uid or result.source_uid or email.imap_uid
 
 
 @router.get("", response_model=list[EmailListItem])
@@ -162,6 +198,52 @@ def get_email(
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
+    annotate_spam_review_metadata(db, [email])
+    _attach_attachment_counts(db, [email])
+    return email
+
+
+@router.post("/{email_id}/regenerate-summary", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
+def regenerate_email_summary_route(
+    email_id: int,
+    request: EmailRegenerateSummaryRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("update_status")),
+) -> Email:
+    email = db.query(Email).filter(Email.id == email_id).first()
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    thread_history = _load_thread_history_for_summary(db, email)
+    summary_language = normalize_language(request.target_language) or "ru"
+    preference_block = build_preference_prompt_block(get_preference_profile(db))
+    try:
+        summary = regenerate_email_summary(
+            email_record=email,
+            thread_history=thread_history,
+            config=get_effective_settings(),
+            summary_language=summary_language,
+            preference_block=preference_block,
+        )
+        email.ai_summary = summary
+        db.add(
+            ActionLog(
+                user_id=current_user.id,
+                email_id=email.id,
+                action_type="summary_regenerated",
+                actor=current_user.email,
+                details_json=json.dumps({"target_language": summary_language}, ensure_ascii=False),
+            )
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to regenerate summary: {exc}") from exc
+
+    db.refresh(email)
     annotate_spam_review_metadata(db, [email])
     _attach_attachment_counts(db, [email])
     return email
@@ -397,21 +479,19 @@ def update_email_status(
 
     mailbox_config = _resolve_runtime_mailbox_for_email(email)
     previous_spam_state = email.is_spam
+    previous_folder = email.folder
+    status = request.status
 
     try:
-        if request.status == "spam":
-            if mailbox_config is not None:
-                spam_email_via_imap(db, email, mailbox_config)
-            else:
-                logger.warning("Mailbox configuration missing; skipping IMAP spam move for email_id=%s", email.id)
-                email.status = "spam"
-                email.is_spam = True
-                email.spam_source = "user"
-                email.spam_reason = "Moved to spam folder"
-                email.folder = "Spam"
-                email.requires_reply = False
-                db.add(email)
-                db.commit()
+        if status == "spam":
+            email.status = "spam"
+            email.is_spam = True
+            email.spam_source = "user"
+            email.spam_reason = "Moved to spam folder"
+            email.folder = STATUS_LOCAL_FOLDERS["spam"]
+            email.requires_reply = False
+            db.add(email)
+            _move_email_on_server(mailbox_config, email, "spam", previous_folder)
             db.add(
                 ActionLog(
                     user_id=current_user.id,
@@ -421,57 +501,66 @@ def update_email_status(
                     details_json=json.dumps({"source": "status_update"}, ensure_ascii=False),
                 )
             )
-        elif request.status == "archived":
-            if mailbox_config is not None:
-                archive_email_via_imap(db, email, mailbox_config)
-            else:
-                logger.warning("Mailbox configuration missing; skipping IMAP archive move for email_id=%s", email.id)
-                email.status = "archived"
-                email.folder = "Archive"
-                email.requires_reply = False
-                db.add(email)
-                db.commit()
-        elif request.status == "reply_later":
-            if mailbox_config is not None:
-                reply_later_email_via_imap(db, email, mailbox_config)
-            else:
-                logger.warning("Mailbox configuration missing; skipping IMAP reply-later move for email_id=%s", email.id)
-                email.status = "archived"
-                email.folder = "Reply Later"
-                email.requires_reply = False
-                db.add(email)
-                db.commit()
-        else:
-            email.status = request.status
-            if previous_spam_state and request.status != "spam":
+        elif status == "archived":
+            email.status = "archived"
+            email.folder = STATUS_LOCAL_FOLDERS["archived"]
+            email.requires_reply = False
+            db.add(email)
+            _move_email_on_server(mailbox_config, email, "archive", previous_folder)
+        elif status == "processed":
+            email.status = "processed"
+            email.folder = STATUS_LOCAL_FOLDERS["processed"]
+            email.requires_reply = False
+            db.add(email)
+            _move_email_on_server(mailbox_config, email, "processed", previous_folder)
+        elif status == "reply_later":
+            email.status = "reply_later"
+            email.folder = STATUS_LOCAL_FOLDERS["reply_later"]
+            db.add(email)
+            _move_email_on_server(mailbox_config, email, "reply_later", previous_folder)
+        elif status == "new":
+            email.status = "new"
+            email.folder = STATUS_LOCAL_FOLDERS["new"]
+            if previous_spam_state:
                 email.is_spam = False
             db.add(email)
-            db.commit()
+            _move_email_on_server(mailbox_config, email, "inbox", previous_folder)
+        else:
+            email.status = status
+            db.add(email)
+        if previous_spam_state and status != "spam":
+            email.is_spam = False
     except HTTPException:
+        db.rollback()
         raise
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"IMAP action failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unexpected status update failure: {exc}") from exc
 
     db.add(
         ActionLog(
             user_id=current_user.id,
             email_id=email.id,
-            action_type=f"status_updated:{request.status}",
+            action_type=f"status_updated:{status}",
             actor=current_user.email,
-            details_json=json.dumps({"status": request.status}, ensure_ascii=False),
+            details_json=json.dumps({"status": status}, ensure_ascii=False),
         )
     )
-    if request.status == "spam" and previous_spam_state:
+    if status == "spam" and previous_spam_state:
         db.add(
             ActionLog(
                 user_id=current_user.id,
                 email_id=email.id,
                 action_type="ai_spam_restored",
                 actor=current_user.email,
-                details_json=json.dumps({"source": "status_update", "new_status": request.status}, ensure_ascii=False),
+                details_json=json.dumps({"source": "status_update", "new_status": status}, ensure_ascii=False),
             )
         )
-    db.commit()
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to persist status update: {exc}") from exc
     db.refresh(email)
     annotate_spam_review_metadata(db, [email])
     _attach_attachment_counts(db, [email])
@@ -489,14 +578,20 @@ def restore_spam_message(
         raise HTTPException(status_code=404, detail="Email not found")
 
     mailbox_config = _resolve_runtime_mailbox_for_email(email)
-    if mailbox_config is not None:
-        try:
-            move_email_via_imap(db, email, mailbox_config, "inbox", mark_seen=True)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=f"IMAP restore failed: {exc}") from exc
+    previous_folder = email.folder
+    try:
+        restore_email_from_spam(db, email, actor=current_user.email)
+        email.folder = STATUS_LOCAL_FOLDERS["new"]
+        db.add(email)
+        _move_email_on_server(mailbox_config, email, "inbox", previous_folder)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to restore message: {exc}") from exc
 
-    restore_email_from_spam(db, email, actor=current_user.email)
-    db.commit()
     rebuild_preference_profile(db)
     db.refresh(email)
     annotate_spam_review_metadata(db, [email])
@@ -515,14 +610,21 @@ def confirm_spam_message(
         raise HTTPException(status_code=404, detail="Email not found")
 
     mailbox_config = _resolve_runtime_mailbox_for_email(email)
-    if mailbox_config is not None:
-        try:
-            spam_email_via_imap(db, email, mailbox_config)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=f"IMAP spam move failed: {exc}") from exc
+    previous_folder = email.folder
+    try:
+        confirm_email_spam(db, email, actor=current_user.email)
+        email.folder = STATUS_LOCAL_FOLDERS["spam"]
+        email.requires_reply = False
+        db.add(email)
+        _move_email_on_server(mailbox_config, email, "spam", previous_folder)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to confirm spam: {exc}") from exc
 
-    confirm_email_spam(db, email, actor=current_user.email)
-    db.commit()
     rebuild_preference_profile(db)
     db.refresh(email)
     annotate_spam_review_metadata(db, [email])
@@ -533,6 +635,7 @@ def confirm_spam_message(
 @router.post("/{email_id}/reply-later", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def move_email_reply_later(
     email_id: int,
+    request: EmailReplyLaterRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("update_status")),
 ) -> Email:
@@ -541,24 +644,37 @@ def move_email_reply_later(
         raise HTTPException(status_code=404, detail="Email not found")
 
     mailbox_config = _resolve_runtime_mailbox_for_email(email)
-    if mailbox_config is None:
-        raise HTTPException(status_code=400, detail="Mailbox configuration is not available")
+    previous_folder = email.folder
+    email.status = "reply_later"
+    email.folder = STATUS_LOCAL_FOLDERS["reply_later"]
+    db.add(email)
 
     try:
-        reply_later_email_via_imap(db, email, mailbox_config)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"IMAP reply-later move failed: {exc}") from exc
-
-    db.add(
-        ActionLog(
-            user_id=current_user.id,
-            email_id=email.id,
-            action_type="status_updated:reply_later",
-            actor=current_user.email,
-            details_json=json.dumps({"status": "reply_later"}, ensure_ascii=False),
+        _move_email_on_server(mailbox_config, email, "reply_later", previous_folder)
+        db.add(
+            ActionLog(
+                user_id=current_user.id,
+                email_id=email.id,
+                action_type="status_updated:reply_later",
+                actor=current_user.email,
+                details_json=json.dumps(
+                    {
+                        "status": "reply_later",
+                        "snooze_until": request.snooze_until.isoformat() if request and request.snooze_until else None,
+                        "interval_minutes": request.interval_minutes if request else None,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
         )
-    )
-    db.commit()
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to move message later: {exc}") from exc
+
     db.refresh(email)
     _attach_attachment_counts(db, [email])
     return email
@@ -903,3 +1019,15 @@ def _attach_attachment_counts(db: Session, emails: list[Email]) -> None:
         counts[email_id] = counts.get(email_id, 0) + 1
     for email in emails:
         setattr(email, "attachment_count", counts.get(email.id, 0))
+
+
+def _load_thread_history_for_summary(db: Session, email: Email) -> list[Email]:
+    if not email.thread_id:
+        return []
+    return (
+        db.query(Email)
+        .filter(Email.thread_id == email.thread_id, Email.id != email.id)
+        .order_by(Email.date_received.desc().nullslast(), Email.id.desc())
+        .limit(5)
+        .all()
+    )

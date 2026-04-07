@@ -103,6 +103,7 @@ def _ensure_email_columns(target_engine) -> None:
         "mailbox_id": "VARCHAR(100)",
         "mailbox_name": "VARCHAR(255)",
         "mailbox_address": "VARCHAR(255)",
+        "imap_uid": "VARCHAR(100)",
         "has_attachments": "BOOLEAN NOT NULL DEFAULT 0",
         "requires_reply": "BOOLEAN NOT NULL DEFAULT 0",
         "assigned_to_user_id": "INTEGER",
@@ -157,6 +158,8 @@ def _ensure_runtime_setting_columns(target_engine) -> None:
     existing_columns = {column["name"] for column in inspector.get_columns("runtime_settings")}
     required_columns = {
         "ai_auto_spam_enabled": "BOOLEAN",
+        "summary_language": "VARCHAR(20)",
+        "scan_since_date": "VARCHAR(50)",
     }
 
     with target_engine.begin() as connection:

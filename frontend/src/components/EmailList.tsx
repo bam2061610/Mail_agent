@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Archive, Ban, Clock, Sparkles, Undo2 } from "lucide-react";
+import { Archive, Ban, Check, Clock, Sparkles, Undo2 } from "lucide-react";
 import type { EmailItem, MailView } from "../types";
 import { Badge } from "./common/Badge";
 import { ImportanceBadge } from "./common/ImportanceBadge";
@@ -14,6 +14,7 @@ type EmailListProps = {
   onSearchChange: (value: string) => void;
   onSelectEmail: (emailId: number) => void;
   onArchiveEmail: (emailId: number) => void;
+  onMarkProcessed: (emailId: number) => void;
   onSpamEmail: (emailId: number) => void;
   onRestoreEmail: (emailId: number) => void;
   onReplyLaterEmail: (emailId: number) => void;
@@ -29,11 +30,6 @@ function cleanText(raw: string | null | undefined): string {
   return stripped;
 }
 
-function truncateText(raw: string, limit: number): string {
-  if (raw.length <= limit) return raw;
-  return `${raw.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
-}
-
 export function EmailList(props: EmailListProps) {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<EmailFilter>("all");
@@ -44,6 +40,8 @@ export function EmailList(props: EmailListProps) {
       ? t("nav.sent")
       : props.view === "spam"
         ? t("nav.spam")
+        : props.view === "processed"
+          ? t("nav.processed")
         : t("nav.settings");
 
   useEffect(() => {
@@ -142,10 +140,7 @@ export function EmailList(props: EmailListProps) {
         {visibleEmails.map((email) => {
           const isSelected = props.selectedEmailId === email.id;
           const summaryFromAi = cleanText(email.ai_summary);
-          const summaryFromBody = truncateText(cleanText(email.body_text || email.body_html), 120);
-          const isAnalyzing = !email.ai_analyzed && !summaryFromAi;
-          const summary = summaryFromAi
-            || (isAnalyzing ? t("queue.analyzing") : summaryFromBody || t("queue.noPreview"));
+          const summary = summaryFromAi || t("queue.analyzing");
           const showAiPrefix = Boolean(summaryFromAi);
 
           return (
@@ -166,8 +161,13 @@ export function EmailList(props: EmailListProps) {
                   <Badge tone={email.status === "spam" ? "danger" : email.direction === "sent" || email.direction === "outbound" ? "accent" : "neutral"}>
                     {email.direction === "sent" || email.direction === "outbound" ? t("status.sent") : email.status}
                   </Badge>
+                  {email.status === "spam" ? (
+                    <Badge tone={email.spam_source === "ai_auto" ? "warning" : "neutral"}>
+                      {email.spam_source === "ai_auto" ? t("spam.aiAuto") : t("spam.manual")}
+                    </Badge>
+                  ) : null}
                 </div>
-                <p className={`email-row-summary${isAnalyzing ? " summary-analyzing" : ""}`}>
+                <p className="email-row-summary">
                   {showAiPrefix ? (
                     <span className="email-row-summary-prefix">
                       <Sparkles size={12} aria-hidden="true" />
@@ -183,12 +183,11 @@ export function EmailList(props: EmailListProps) {
                 </div>
               </div>
               <div className="email-row-actions">
-                {props.view === "spam" ? (
+                {props.view === "spam" || props.view === "processed" ? (
                   <button
                     className="button button-ghost quick-action icon-action"
                     type="button"
                     data-tooltip={t("detail.restoreActive")}
-                    title={t("detail.restoreActive")}
                     aria-label={t("detail.restoreActive")}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -204,7 +203,6 @@ export function EmailList(props: EmailListProps) {
                       className="button button-ghost quick-action icon-action"
                       type="button"
                       data-tooltip={t("detail.archive")}
-                      title={t("detail.archive")}
                       aria-label={t("detail.archive")}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -217,8 +215,20 @@ export function EmailList(props: EmailListProps) {
                     <button
                       className="button button-ghost quick-action icon-action"
                       type="button"
+                      data-tooltip={t("detail.markProcessed")}
+                      aria-label={t("detail.markProcessed")}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        props.onMarkProcessed(email.id);
+                      }}
+                    >
+                      <Check size={16} aria-hidden="true" />
+                      <span className="icon-action-label">{t("detail.markProcessed")}</span>
+                    </button>
+                    <button
+                      className="button button-ghost quick-action icon-action"
+                      type="button"
                       data-tooltip={t("detail.markSpam")}
-                      title={t("detail.markSpam")}
                       aria-label={t("detail.markSpam")}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -232,7 +242,6 @@ export function EmailList(props: EmailListProps) {
                       className="button button-ghost quick-action icon-action"
                       type="button"
                       data-tooltip={t("detail.later")}
-                      title={t("detail.later")}
                       aria-label={t("detail.later")}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -246,7 +255,6 @@ export function EmailList(props: EmailListProps) {
                       className="button button-secondary quick-action icon-action"
                       type="button"
                       data-tooltip={t("detail.replyWithAi")}
-                      title={t("detail.replyWithAi")}
                       aria-label={t("detail.replyWithAi")}
                       onClick={(event) => {
                         event.stopPropagation();

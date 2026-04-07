@@ -951,6 +951,30 @@ textarea {
   border: 1px solid rgba(10, 132, 255, 0.12);
 }
 
+.original-message-panel {
+  gap: 0.8rem;
+}
+
+.original-message-toggle {
+  margin-left: auto;
+}
+
+.original-message-frame {
+  display: block;
+  border-radius: 16px;
+  background: white;
+}
+
+.original-message-text {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: white;
+  border: 1px solid var(--line);
+  color: var(--text);
+  overflow-y: auto;
+}
+
 .quote-block h5 {
   margin: 0;
   font-size: 0.9rem;
@@ -983,6 +1007,10 @@ textarea {
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.read-preview-copy.is-fallback {
+  color: var(--muted);
 }
 
 .detail-meta-grid {
@@ -1102,29 +1130,31 @@ textarea {
   background: rgba(10, 132, 255, 0.12);
 }
 
-.quick-action::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 0.55rem);
-  transform: translate(-50%, 4px);
-  opacity: 0;
-  pointer-events: none;
-  padding: 0.35rem 0.55rem;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.94);
-  color: white;
-  font-size: 0.75rem;
-  line-height: 1;
-  white-space: nowrap;
-  transition: opacity 0.18s ease 0.4s, transform 0.18s ease 0.4s;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.24);
+[data-tooltip] {
+  position: relative;
 }
 
-.email-row:hover .quick-action::after,
-.quick-action:focus-visible::after {
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease 0.3s;
+  z-index: 1000;
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
   opacity: 1;
-  transform: translate(-50%, 0);
 }
 
 .detail-toolbar {
@@ -1265,6 +1295,35 @@ textarea {
   width: min(100%, 620px);
   display: grid;
   gap: 0.75rem;
+}
+
+.settings-scan-form {
+  width: min(100%, 620px);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: fit-content;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-toggle input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+}
+
+.summary-regenerate {
+  justify-self: start;
+  margin-top: 0.35rem;
+  padding-inline: 0;
+  min-height: auto;
+  color: var(--accent);
 }
 
 .mobile-menu {

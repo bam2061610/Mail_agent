@@ -14,6 +14,7 @@ def _cfg():
         ai_max_retries=1,
         ai_timeout_seconds=5,
         interface_language="ru",
+        summary_language="tr",
         ai_auto_spam_enabled=False,
     )
 
@@ -34,9 +35,16 @@ def test_analyze_email_parses_structured_response(monkeypatch):
         "key_amounts": ["$5000"],
         "draft_reply": "Thanks, we will respond shortly.",
     }
-    monkeypatch.setattr(ai_analyzer, "_call_model_once", lambda **_kwargs: json.dumps(payload))
+    captured: dict[str, object] = {}
+
+    def _fake_call(**kwargs):
+        captured.update(kwargs)
+        return json.dumps(payload)
+
+    monkeypatch.setattr(ai_analyzer, "_call_model_once", _fake_call)
     email = Email(id=1, subject="RFQ", sender_email="sales@supplier.com", body_text="Need quote", recipients_json="[]", cc_json="[]")
     result = ai_analyzer.analyze_email(email, [], _cfg())
+    assert "Write the summary in Turkish." in str(captured["system_prompt"])
     assert result.priority == "high"
     assert result.importance_score == 9
     assert result.category == "RFQ"
@@ -129,6 +137,75 @@ def test_save_analysis_result_respects_auto_spam_flag(db_session):
     db_session.refresh(email)
     assert email.is_spam is False
     assert email.status == "new"
+
+
+def test_save_analysis_result_auto_spam_moves_message(db_session, monkeypatch):
+    email = Email(
+        message_id="<spam-auto@test>",
+        mailbox_id="mailbox-1",
+        imap_uid="77",
+        subject="Limited time offer",
+        sender_email="promo@example.com",
+        body_text="Click here now",
+        folder="INBOX",
+        direction="inbound",
+        status="new",
+        ai_analyzed=False,
+        date_received=datetime.now(timezone.utc),
+    )
+    db_session.add(email)
+    db_session.commit()
+
+    mailbox_config = SimpleNamespace(
+        id="mailbox-1",
+        name="Mailbox",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="promo@example.com",
+        imap_password="secret",
+    )
+    recorded: dict[str, object] = {}
+
+    def fake_move(mailbox, imap_uid, target_folder, **kwargs):
+        recorded["mailbox"] = mailbox
+        recorded["imap_uid"] = imap_uid
+        recorded["target_folder"] = target_folder
+        recorded["source_folder"] = kwargs.get("source_folder")
+        return SimpleNamespace(
+            status="moved",
+            source_uid=imap_uid,
+            target_uid="991",
+            source_folder=kwargs.get("source_folder"),
+            target_folder="OMA/Spam",
+            used_move_command=True,
+        )
+
+    monkeypatch.setattr(ai_analyzer, "get_outgoing_mailbox_for_email", lambda _email: mailbox_config)
+    monkeypatch.setattr(ai_analyzer, "move_email_on_server", fake_move)
+
+    ai_analyzer.save_analysis_result(
+        db_session,
+        email,
+        ai_analyzer.AnalysisResult(
+            summary="Spam offer.",
+            priority="spam",
+            category="Spam",
+            action_required=False,
+            is_spam=True,
+            spam_reason="Mass promo with tracking links",
+        ),
+        config=SimpleNamespace(auto_spam_enabled=True),
+    )
+
+    db_session.refresh(email)
+    assert email.is_spam is True
+    assert email.status == "spam"
+    assert email.spam_source == "ai_auto"
+    assert email.spam_reason == "Mass promo with tracking links"
+    assert email.folder == "Spam"
+    assert email.imap_uid == "991"
+    assert recorded["target_folder"] == "spam"
+    assert recorded["source_folder"] == "INBOX"
 
 
 def test_generate_personalized_draft_defaults_to_latest_thread_language_and_custom_prompt(monkeypatch):

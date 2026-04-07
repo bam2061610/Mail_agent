@@ -35,8 +35,10 @@ class Settings(BaseSettings):
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     interface_language: str = Field(default="ru", alias="INTERFACE_LANGUAGE")
+    summary_language: str = Field(default="ru", alias="SUMMARY_LANGUAGE")
+    scan_since_date: str | None = Field(default=None, alias="SCAN_SINCE_DATE")
     signature: str = Field(default="", alias="SIGNATURE")
-    ai_auto_spam_enabled: bool = Field(default=False, alias="AI_AUTO_SPAM_ENABLED")
+    ai_auto_spam_enabled: bool = Field(default=True, alias="AI_AUTO_SPAM_ENABLED")
     ai_max_retries: int = Field(default=3, alias="AI_MAX_RETRIES")
     ai_timeout_seconds: int = Field(default=60, alias="AI_TIMEOUT_SECONDS")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
@@ -113,6 +115,7 @@ def save_runtime_settings(updates: dict[str, Any]) -> dict[str, Any]:
 def get_effective_settings() -> SimpleNamespace:
     merged = settings.model_dump()
     merged.update(load_runtime_settings())
+    merged["auto_spam_enabled"] = bool(merged.get("ai_auto_spam_enabled", False))
     return SimpleNamespace(**merged)
 
 
@@ -125,7 +128,8 @@ def get_safe_settings_view() -> dict[str, Any]:
     payload["has_imap_password"] = bool(getattr(effective, "imap_password", None))
     payload["has_smtp_password"] = bool(getattr(effective, "smtp_password", None))
     payload["has_openai_api_key"] = bool(getattr(effective, "openai_api_key", None))
-    payload["ai_auto_spam_enabled"] = bool(getattr(effective, "ai_auto_spam_enabled", False))
+    payload["auto_spam_enabled"] = bool(getattr(effective, "ai_auto_spam_enabled", False))
+    payload["ai_auto_spam_enabled"] = payload["auto_spam_enabled"]
     return payload
 
 
@@ -148,8 +152,11 @@ def _runtime_setting_to_dict(row: Any) -> dict[str, Any]:
         "deepseek_base_url": row.deepseek_base_url,
         "deepseek_model": row.deepseek_model,
         "interface_language": row.interface_language,
+        "summary_language": row.summary_language,
+        "scan_since_date": row.scan_since_date,
         "signature": row.signature,
         "ai_auto_spam_enabled": row.ai_auto_spam_enabled,
+        "auto_spam_enabled": row.ai_auto_spam_enabled,
         "ai_max_retries": row.ai_max_retries,
         "ai_timeout_seconds": row.ai_timeout_seconds,
         "redis_url": row.redis_url,
@@ -170,6 +177,15 @@ def _runtime_setting_to_dict(row: Any) -> dict[str, Any]:
 def _apply_runtime_setting_update(row: Any, key: str, value: Any) -> None:
     if key == "cors_origins":
         row.cors_origins_json = json.dumps(value, ensure_ascii=False)
+        return
+    if key == "auto_spam_enabled":
+        key = "ai_auto_spam_enabled"
+    if key == "scan_since_date" and isinstance(value, str):
+        normalized = value.strip()
+        setattr(row, key, normalized or None)
+        return
+    if key in {"interface_language", "summary_language"} and isinstance(value, str):
+        setattr(row, key, value.strip().lower())
         return
     if hasattr(row, key):
         setattr(row, key, value)

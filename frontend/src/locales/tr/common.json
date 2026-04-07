@@ -27,6 +27,7 @@
     "sent": "Gönderilenler",
     "waiting": "Bekleyen kuyruk",
     "spam": "Spam kaydı",
+    "processed": "İşlenmiş",
     "reports": "Raporlar",
     "settings": "Ayarlar"
   },
@@ -78,7 +79,9 @@
     "movedLater": "Daha Sonra Yanıtla alanına taşındı.",
     "movedSpam": "Spam olarak işaretlendi.",
     "archived": "Arşivlendi.",
-    "restored": "Geri yüklendi."
+    "restored": "Geri yüklendi.",
+    "markProcessed": "İşlendi olarak işaretlendi.",
+    "summaryRegenerated": "Özet yeniden oluşturuldu."
   },
   "errors": {
     "translateFailed": "Taslak çevrilemedi."
@@ -122,6 +125,7 @@
     "archive": "Arşivle",
     "replyMyself": "Kendim yanıtlayacağım",
     "markSpam": "Spam olarak işaretle",
+    "markProcessed": "İşlendi olarak işaretle",
     "restoreActive": "Aktif duruma geri getir",
     "confirmSpam": "Spamı onayla",
     "later": "Daha sonra / ertele",
@@ -135,7 +139,10 @@
     "draftNeedsWork": "Taslak geliştirme gerektiriyor",
     "importance": "Önem",
     "summaryHeading": "Özet",
+    "regenerateSummary": "Özeti {{language}} dilinde yeniden oluştur",
     "originalMessage": "Orijinal mesaj",
+    "showOriginal": "Orijinali göster",
+    "hideOriginal": "Orijinali gizle",
     "replyTitle": "Yanıt önizlemesi",
     "readTitle": "Mesajı oku",
     "replyNow": "Yanıtla",
@@ -170,6 +177,10 @@
     "language": "Dil",
     "english": "İngilizce",
     "russian": "Rusça",
+    "turkish": "Türkçe",
+    "autoSpam": "AI otomatik spam tespiti",
+    "scanSinceDate": "E-postaları şu tarihten yükle",
+    "scanSinceDateHint": "Bu tarihten sonra alınan e-postalar tarama sırasında yüklenecektir",
     "signature": "İmza",
     "saveSignature": "İmzayı kaydet",
     "signatureSaved": "İmza kaydedildi"
@@ -238,10 +249,12 @@
       "title": "Bekleyen kuyruk",
       "subtitle": "Giden konuşmaları, gecikmiş başlıkları ve önerilen takipleri izleyin."
     },
-    "spam": {
-      "title": "Spam inceleme kaydı",
-      "subtitle": "Engellenen mesajları denetleyin, AI veya kural kaynağını görün ve hataları hızla geri alın."
-    },
+  "spam": {
+    "aiAuto": "AI otomatik",
+    "manual": "Manuel",
+    "title": "Spam inceleme kaydı",
+    "subtitle": "Engellenen mesajları denetleyin, AI veya kural kaynağını görün ve hataları hızla geri alın."
+  },
     "reports": {
       "title": "Raporlar ve dışa aktarma",
       "subtitle": "Dönem bazlı aktivite ve takip raporları oluşturun, ardından dışa aktarın veya e-postalayın."

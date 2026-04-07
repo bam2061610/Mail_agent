@@ -14,6 +14,7 @@ from app.schemas.system import (
     SettingsResponse,
     SettingsUpdateRequest,
 )
+from app.services.imap_folder_service import ensure_folders
 from app.services.imap_scanner import connect_imap, scan_inbox
 from app.services.mailbox_service import (
     create_mailbox,
@@ -92,18 +93,25 @@ def test_mailbox_connection(
     if mailbox is None:
         raise HTTPException(status_code=404, detail="Mailbox not found")
     runtime_mailbox = to_runtime_mailbox(mailbox)
+    connection = None
     try:
         connection = connect_imap(runtime_mailbox)
         status, _ = connection.select("INBOX", readonly=True)
         if status != "OK":
             raise RuntimeError("INBOX select failed")
-        try:
-            connection.close()
-        except Exception:  # noqa: BLE001
-            pass
-        connection.logout()
+        ensure_folders(runtime_mailbox)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Connection test failed: {exc}") from exc
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                connection.logout()
+            except Exception:  # noqa: BLE001
+                pass
     return OperationStatusResponse()
 
 

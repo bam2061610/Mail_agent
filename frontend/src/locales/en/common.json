@@ -27,6 +27,7 @@
     "sent": "Sent",
     "waiting": "Waiting Queue",
     "spam": "Spam Log",
+    "processed": "Processed",
     "reports": "Reports",
     "settings": "Settings"
   },
@@ -78,7 +79,9 @@
     "movedLater": "Moved to Reply Later.",
     "movedSpam": "Marked as spam.",
     "archived": "Archived.",
-    "restored": "Restored."
+    "restored": "Restored.",
+    "markProcessed": "Marked as processed.",
+    "summaryRegenerated": "Summary regenerated."
   },
   "errors": {
     "translateFailed": "Could not translate draft."
@@ -122,6 +125,7 @@
     "archive": "Archive",
     "replyMyself": "I will reply myself",
     "markSpam": "Mark spam",
+    "markProcessed": "Mark as processed",
     "restoreActive": "Restore to active",
     "confirmSpam": "Confirm spam",
     "later": "Later / snooze",
@@ -135,7 +139,10 @@
     "draftNeedsWork": "Draft needs work",
     "importance": "Importance",
     "summaryHeading": "Summary",
+    "regenerateSummary": "Regenerate summary in {{language}}",
     "originalMessage": "Original message",
+    "showOriginal": "Show original",
+    "hideOriginal": "Hide original",
     "replyTitle": "Reply preview",
     "readTitle": "Read message",
     "replyNow": "Reply",
@@ -170,6 +177,10 @@
     "language": "Language",
     "english": "English",
     "russian": "Русский",
+    "turkish": "Turkish",
+    "autoSpam": "AI auto-spam detection",
+    "scanSinceDate": "Load emails since",
+    "scanSinceDateHint": "Emails received after this date will be loaded during scan",
     "signature": "Signature",
     "saveSignature": "Save signature",
     "signatureSaved": "Signature saved"
@@ -238,10 +249,12 @@
       "title": "Waiting queue",
       "subtitle": "Track outbound conversations, overdue threads, and suggested follow-ups."
     },
-    "spam": {
-      "title": "Spam review log",
-      "subtitle": "Audit blocked messages, see AI or rule source, and restore mistakes quickly."
-    },
+  "spam": {
+    "aiAuto": "AI auto",
+    "manual": "Manual",
+    "title": "Spam review log",
+    "subtitle": "Audit blocked messages, see AI or rule source, and restore mistakes quickly."
+  },
     "reports": {
       "title": "Reports and exports",
       "subtitle": "Generate period-based activity and follow-up reports, then export or email them."

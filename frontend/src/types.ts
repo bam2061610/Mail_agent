@@ -1,5 +1,5 @@
 export type ViewKey = "focus" | "active" | "sent" | "waiting" | "spam" | "reports" | "settings";
-export type MailView = "inbox" | "sent" | "spam" | "settings";
+export type MailView = "inbox" | "sent" | "spam" | "processed" | "settings";
 export type UserRole = "admin" | "manager" | "operator" | "viewer";
 
 export type EmailItem = {
@@ -99,6 +99,10 @@ export type SettingsResponse = {
   smtp_use_ssl: boolean;
   deepseek_base_url: string;
   deepseek_model: string;
+  interface_language: string;
+  summary_language: string;
+  scan_since_date: string | null;
+  auto_spam_enabled: boolean;
   scan_interval_minutes: number;
   followup_overdue_days: number;
   catchup_absence_hours: number;
@@ -255,6 +259,8 @@ export const initialSettingsForm = {
   deepseek_base_url: "",
   deepseek_model: "",
   openai_api_key: "",
+  scan_since_date: "",
+  auto_spam_enabled: true,
   scan_interval_minutes: "5",
   followup_overdue_days: "3",
   catchup_absence_hours: "8",

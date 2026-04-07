@@ -90,7 +90,7 @@ function authenticatedRoutes(user = adminUser): Record<string, RouteResponse> {
 
   return {
     "GET /api/auth/me": { body: { user } },
-    "GET /api/settings": { body: { signature: "Best regards,\nAdmin User" } },
+    "GET /api/settings": { body: { signature: "Best regards,\nAdmin User", summary_language: "ru", interface_language: "ru", auto_spam_enabled: true } },
     "GET /api/emails?limit=60&direction=inbound": { body: [sampleEmail] },
     "GET /api/emails/42": { body: { ...sampleEmail, thread_id: "thread-42", created_at: "2026-04-02T11:50:00Z", updated_at: "2026-04-02T12:00:00Z" } },
     "GET /api/emails/42/thread": {
@@ -107,11 +107,12 @@ function authenticatedRoutes(user = adminUser): Record<string, RouteResponse> {
       },
     },
     "GET /api/emails/42/attachments": { body: [{ id: 7, email_id: 42, filename: "quote.pdf", content_type: "application/pdf", size_bytes: 1024, is_inline: false, created_at: "2026-04-02T12:00:00Z" }] },
-    "POST /api/emails/42/generate-draft": { body: { draft_reply: "Hello, thanks for the message.", subject: "Re: Supplier quotation request", target_language: "en" } },
+    "POST /api/emails/42/generate-draft": { body: { draft_reply: "Hello, thanks for the message.", subject: "Re: Supplier quotation request", target_language: "ru" } },
     "POST /api/emails/42/reply": { body: { status: "replied" } },
     "POST /api/emails/42/status": { body: { status: "archived" } },
     "POST /api/emails/42/restore": { body: { status: "new" } },
     "POST /api/emails/42/confirm-spam": { body: { status: "spam" } },
+    "POST /api/settings": { body: { status: "ok", summary_language: "ru" } },
     "GET /api/emails?limit=60&direction=sent": { body: [] },
     "GET /api/emails?limit=60&status=spam": { body: [] },
   };
@@ -134,12 +135,17 @@ it("logs in and renders the minimal inbox UI", async () => {
   expect(await screen.findByText("Supplier quotation request")).toBeInTheDocument();
   expect(screen.getByText("Needs reply")).toBeInTheDocument();
   expect(screen.getByLabelText("Importance: 9/10")).toBeInTheDocument();
+  expect(screen.queryByText("Hello, please find quotation details attached.")).not.toBeInTheDocument();
   await user.click(screen.getByText("Supplier quotation request"));
   const dialog = await screen.findByRole("dialog", { name: "Read message" });
   expect(dialog).toBeInTheDocument();
   expect(within(dialog).getByText("Summary")).toBeInTheDocument();
   expect(within(dialog).getByLabelText("Importance: 9/10")).toBeInTheDocument();
-  expect(within(dialog).getByText("Original message")).toBeInTheDocument();
+  expect(within(dialog).getByRole("button", { name: "Show original" })).toBeInTheDocument();
+  expect(within(dialog).queryByText("Hello, please find quotation details attached.")).not.toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Show original" }));
+  expect(within(dialog).getByRole("button", { name: "Hide original" })).toBeInTheDocument();
+  expect(within(dialog).getByText("Hello, please find quotation details attached.")).toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

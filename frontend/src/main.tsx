@@ -25,14 +25,32 @@ function buildReplySubject(subject?: string | null): string {
 }
 
 function normalizeReplyLanguage(value?: string | null): "ru" | "en" | "tr" {
-  const normalized = (value || "").toLowerCase();
-  if (normalized === "en" || normalized === "tr") return normalized;
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "en" || normalized === "english") return "en";
+  if (normalized === "tr" || normalized === "turkish") return "tr";
+  if (normalized === "ru" || normalized === "russian") return "ru";
   return "ru";
+}
+
+function normalizeDateInput(value?: string | null): string {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw.slice(0, 10);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function buildScanSinceDateIso(value: string): string | null {
+  const raw = value.trim();
+  if (!raw) return null;
+  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
 }
 
 function filterEmailsForView(view: MailView, emails: EmailItem[]): EmailItem[] {
   if (view !== "inbox") return emails;
-  return emails.filter((item) => item.status !== "spam" && item.status !== "archived" && item.status !== "reply_later");
+  return emails.filter((item) => item.status !== "spam" && item.status !== "archived" && item.status !== "reply_later" && item.status !== "processed");
 }
 
 function buildReplyBody(draftText: string, signature: string, originalEmail: EmailItem | null): string {
@@ -64,6 +82,9 @@ export function App() {
   const [replyPrompt, setReplyPrompt] = useState("");
   const [replySignature, setReplySignature] = useState("");
   const [settingsSignature, setSettingsSignature] = useState("");
+  const [summaryLanguage, setSummaryLanguage] = useState<"ru" | "en" | "tr">("ru");
+  const [autoSpamEnabled, setAutoSpamEnabled] = useState(true);
+  const [scanSinceDate, setScanSinceDate] = useState("");
   const [savingSignature, setSavingSignature] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -102,6 +123,9 @@ export function App() {
       setReplyPrompt("");
       setReplySignature("");
       setSettingsSignature("");
+      setSummaryLanguage("ru");
+      setAutoSpamEnabled(true);
+      setScanSinceDate("");
       setSavingSignature(false);
       setModalMode(null);
     }
@@ -112,9 +136,15 @@ export function App() {
     apiGet<SettingsResponse>("/api/settings")
       .then((settings) => {
         setSettingsSignature((settings.signature || "").trim());
+        setSummaryLanguage(normalizeReplyLanguage(settings.summary_language || settings.interface_language || "ru"));
+        setAutoSpamEnabled(settings.auto_spam_enabled ?? true);
+        setScanSinceDate(normalizeDateInput(settings.scan_since_date));
       })
       .catch(() => {
         setSettingsSignature("");
+        setSummaryLanguage("ru");
+        setAutoSpamEnabled(true);
+        setScanSinceDate("");
       });
   }, [currentUser]);
 
@@ -151,6 +181,8 @@ export function App() {
         params.set("direction", "sent");
       } else if (view === "spam") {
         params.set("status", "spam");
+      } else if (view === "processed") {
+        params.set("status", "processed");
       } else {
         params.set("direction", "inbound");
       }
@@ -194,8 +226,9 @@ export function App() {
       setMailActionLoading("draft");
       setDraftText("");
       try {
+        const targetLanguage = options?.targetLanguage || summaryLanguage || replyLanguage;
         const response = await apiPost<DraftGenerationResponse>(`/api/emails/${emailId}/generate-draft`, {
-          target_language: options?.targetLanguage || replyLanguage,
+          target_language: targetLanguage,
           custom_prompt: options?.customPrompt?.trim() || undefined,
         });
         setDraftText(response.draft_reply);
@@ -208,7 +241,7 @@ export function App() {
         setMailActionLoading(null);
       }
     },
-    [replyLanguage, t]
+    [replyLanguage, summaryLanguage, t]
   );
 
   const openEmailModal = useCallback(
@@ -219,10 +252,10 @@ export function App() {
       setLoadingDetail(true);
       setAppError("");
       try {
-        const inferredLanguage = await reloadSelectedEmail(emailId);
+        await reloadSelectedEmail(emailId);
         if (mode === "reply" && autoGenerate) {
           setAppSuccess("");
-          await generateDraftForEmail(emailId, { targetLanguage: inferredLanguage, customPrompt: "", showSuccess: false });
+          await generateDraftForEmail(emailId, { targetLanguage: summaryLanguage, customPrompt: "", showSuccess: false });
         }
       } catch (error) {
         setAppError(getErrorMessage(error, autoGenerate ? "Could not generate draft." : "Could not load the selected email."));
@@ -230,7 +263,7 @@ export function App() {
         setLoadingDetail(false);
       }
     },
-    [currentUser, generateDraftForEmail, reloadSelectedEmail]
+    [currentUser, generateDraftForEmail, reloadSelectedEmail, summaryLanguage]
   );
 
   useEffect(() => {
@@ -292,10 +325,13 @@ export function App() {
         next.folder = "Spam";
       } else if (status === "archived") {
         next.folder = "Archive";
+      } else if (status === "processed") {
+        next.folder = "Processed";
       } else if (status === "reply_later") {
         next.folder = "Reply Later";
       } else if (status === "new") {
         next.is_spam = false;
+        next.folder = "INBOX";
       }
       return next;
     };
@@ -316,7 +352,7 @@ export function App() {
     try {
       await apiPost(`/api/emails/${emailId}/status`, { status });
       setAppSuccess(successMessage);
-      if (shouldCloseDetail && (status === "spam" || status === "archived" || status === "reply_later")) {
+      if (shouldCloseDetail && (status === "spam" || status === "archived" || status === "reply_later" || status === "processed")) {
         closeModal();
       }
       await refreshCurrentView();
@@ -325,6 +361,29 @@ export function App() {
       setSelectedEmail(snapshotSelectedEmail);
       setThread(snapshotThread);
       setAppError(getErrorMessage(error, "Could not update message status."));
+    }
+  }
+
+  async function markProcessed(emailId: number) {
+    const snapshotEmails = emails;
+    const snapshotSelectedEmail = selectedEmail;
+    const snapshotThread = thread;
+    const shouldCloseDetail = selectedEmailId === emailId;
+    setAppError("");
+    setAppSuccess("");
+    applyOptimisticStatus(emailId, "processed");
+    try {
+      await apiPost(`/api/emails/${emailId}/status`, { status: "processed" });
+      setAppSuccess(t("success.markProcessed"));
+      if (shouldCloseDetail) {
+        closeModal();
+      }
+      await refreshCurrentView();
+    } catch (error) {
+      setEmails(snapshotEmails);
+      setSelectedEmail(snapshotSelectedEmail);
+      setThread(snapshotThread);
+      setAppError(getErrorMessage(error, "Could not mark message as processed."));
     }
   }
 
@@ -354,7 +413,7 @@ export function App() {
     setAppSuccess("");
     try {
       await generateDraftForEmail(selectedEmailId, {
-        targetLanguage: replyLanguage,
+        targetLanguage: summaryLanguage,
         customPrompt: replyPrompt,
         showSuccess: true,
       });
@@ -380,6 +439,25 @@ export function App() {
       setReplyLanguage(targetLang);
     } catch (error) {
       setAppError(getErrorMessage(error, t("errors.translateFailed")));
+    } finally {
+      setMailActionLoading(null);
+    }
+  }
+
+  async function regenerateSummary() {
+    if (!selectedEmailId || !selectedEmail) return;
+    setAppError("");
+    setAppSuccess("");
+    setMailActionLoading("summary");
+    try {
+      const response = await apiPost<EmailItem>(`/api/emails/${selectedEmailId}/regenerate-summary`, {
+        target_language: summaryLanguage,
+      });
+      setSelectedEmail(response);
+      await reloadSelectedEmail(selectedEmailId);
+      setAppSuccess(t("success.summaryRegenerated"));
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not regenerate summary."));
     } finally {
       setMailActionLoading(null);
     }
@@ -426,6 +504,47 @@ export function App() {
     }
   }
 
+  async function saveSummaryLanguage(language: "ru" | "en" | "tr") {
+    setAppError("");
+    try {
+      await apiPost("/api/settings", {
+        summary_language: language,
+      });
+      setSummaryLanguage(language);
+      setAppSuccess(language === "ru" ? "Язык изменен." : language === "tr" ? "Dil güncellendi." : "Language updated.");
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not save language preference."));
+    }
+  }
+
+  async function saveAutoSpamEnabled(nextValue: boolean) {
+    const previousValue = autoSpamEnabled;
+    setAppError("");
+    setAutoSpamEnabled(nextValue);
+    try {
+      await apiPost("/api/settings", {
+        auto_spam_enabled: nextValue,
+      });
+    } catch (error) {
+      setAutoSpamEnabled(previousValue);
+      setAppError(getErrorMessage(error, "Could not save auto-spam preference."));
+    }
+  }
+
+  async function saveScanSinceDate(nextValue: string) {
+    const previousValue = scanSinceDate;
+    setAppError("");
+    setScanSinceDate(nextValue);
+    try {
+      await apiPost("/api/settings", {
+        scan_since_date: buildScanSinceDateIso(nextValue),
+      });
+    } catch (error) {
+      setScanSinceDate(previousValue);
+      setAppError(getErrorMessage(error, "Could not save scan start date."));
+    }
+  }
+
   const shellClass = `app-shell${mobileSidebarOpen ? " sidebar-open" : ""}`;
 
   if (authLoading) {
@@ -463,6 +582,8 @@ export function App() {
                     ? t("views.sent.title")
                     : view === "spam"
                       ? t("views.spam.title")
+                      : view === "processed"
+                        ? t("nav.processed")
                       : t("nav.inbox", { defaultValue: "Inbox" })}
               </h2>
             </div>
@@ -492,7 +613,15 @@ export function App() {
             language={i18n.language.startsWith("ru") ? "ru" : i18n.language.startsWith("tr") ? "tr" : "en"}
             onLanguageChange={(language) => {
               void i18n.changeLanguage(language);
-              setAppSuccess(language === "ru" ? "Язык изменен." : language === "tr" ? "Dil güncellendi." : "Language updated.");
+              void saveSummaryLanguage(language);
+            }}
+            autoSpamEnabled={autoSpamEnabled}
+            onAutoSpamChange={(value) => {
+              void saveAutoSpamEnabled(value);
+            }}
+            scanSinceDate={scanSinceDate}
+            onScanSinceDateChange={(value) => {
+              void saveScanSinceDate(value);
             }}
             signature={settingsSignature}
             onSignatureChange={setSettingsSignature}
@@ -514,6 +643,7 @@ export function App() {
                 void openEmailModal(emailId, "read");
               }}
               onArchiveEmail={(emailId) => void updateStatus(emailId, "archived", t("success.archived"))}
+              onMarkProcessed={(emailId) => void markProcessed(emailId)}
               onSpamEmail={(emailId) => void updateStatus(emailId, "spam", t("success.movedSpam"))}
               onRestoreEmail={(emailId) => void updateStatus(emailId, "new", t("success.restored"))}
               onReplyLaterEmail={(emailId) => void moveReplyLater(emailId)}
@@ -536,6 +666,7 @@ export function App() {
               replySubject={replySubject}
               replyPrompt={replyPrompt}
               replySignature={replySignature}
+              summaryLanguage={summaryLanguage}
               onClose={closeModal}
               onModeChange={(nextMode) => setModalMode(nextMode)}
               onDraftChange={setDraftText}
@@ -549,6 +680,7 @@ export function App() {
               onGenerateDraft={() => void generateDraft()}
               onTranslateDraft={(lang) => void translateDraft(lang)}
               onSendReply={() => void sendReply()}
+              onRegenerateSummary={() => void regenerateSummary()}
               onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
               onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
               onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}
