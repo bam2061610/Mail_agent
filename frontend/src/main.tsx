@@ -2,14 +2,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
-import { apiGet, apiPost, buildReplyPayload, getErrorMessage } from "./api";
+import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, getErrorMessage } from "./api";
 import { useAuth } from "./hooks/useAuth";
 import { LoginScreen } from "./components/LoginScreen";
 import { Sidebar } from "./components/Sidebar";
 import { EmailList } from "./components/EmailList";
 import { EmailDetail } from "./components/EmailDetail";
 import { SettingsPanel } from "./components/SettingsPanel";
-import type { AttachmentItem, DraftGenerationResponse, EmailItem, MailView, SettingsResponse, ThreadResponse } from "./types";
+import { initialMailboxForm, type AttachmentItem, type DraftGenerationResponse, type EmailItem, type MailView, type MailboxFormState, type MailboxItem, type SettingsResponse, type ThreadResponse } from "./types";
 import "./styles.css";
 
 function splitRecipients(value: string): string[] {
@@ -86,6 +86,12 @@ export function App() {
   const [autoSpamEnabled, setAutoSpamEnabled] = useState(true);
   const [scanSinceDate, setScanSinceDate] = useState("");
   const [savingSignature, setSavingSignature] = useState(false);
+  const [mailboxes, setMailboxes] = useState<MailboxItem[]>([]);
+  const [mailboxesLoading, setMailboxesLoading] = useState(false);
+  const [mailboxSaving, setMailboxSaving] = useState(false);
+  const [mailboxActionLoadingId, setMailboxActionLoadingId] = useState<string | null>(null);
+  const [editingMailboxId, setEditingMailboxId] = useState<string | null>(null);
+  const [mailboxForm, setMailboxForm] = useState<MailboxFormState>(initialMailboxForm);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [mailActionLoading, setMailActionLoading] = useState<string | null>(null);
@@ -129,6 +135,12 @@ export function App() {
       setSummaryLanguage("ru");
       setAutoSpamEnabled(true);
       setScanSinceDate("");
+      setMailboxes([]);
+      setMailboxesLoading(false);
+      setMailboxSaving(false);
+      setMailboxActionLoadingId(null);
+      setEditingMailboxId(null);
+      setMailboxForm(initialMailboxForm);
       setSavingSignature(false);
       setModalMode(null);
     }
@@ -138,6 +150,8 @@ export function App() {
     if (!currentUser) return;
     apiGet<SettingsResponse>("/api/settings")
       .then((settings) => {
+        const interfaceLanguage = normalizeReplyLanguage(settings.interface_language || settings.summary_language || "ru");
+        void i18n.changeLanguage(interfaceLanguage);
         setSettingsSignature((settings.signature || "").trim());
         setSummaryLanguage(normalizeReplyLanguage(settings.summary_language || settings.interface_language || "ru"));
         setAutoSpamEnabled(settings.auto_spam_enabled ?? true);
@@ -151,11 +165,34 @@ export function App() {
       });
   }, [currentUser]);
 
+  const resetMailboxEditor = useCallback(() => {
+    setEditingMailboxId(null);
+    setMailboxForm(initialMailboxForm);
+  }, []);
+
+  const loadMailboxes = useCallback(async () => {
+    if (!currentUser) return;
+    setMailboxesLoading(true);
+    try {
+      const items = await apiGet<MailboxItem[]>("/api/mailboxes");
+      setMailboxes(items);
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not load mailboxes."));
+    } finally {
+      setMailboxesLoading(false);
+    }
+  }, [currentUser]);
+
   useEffect(() => {
     if (modalMode === "reply" && settingsSignature && !replySignature.trim()) {
       setReplySignature(settingsSignature);
     }
   }, [modalMode, replySignature, settingsSignature]);
+
+  useEffect(() => {
+    if (!currentUser || view !== "settings") return;
+    void loadMailboxes();
+  }, [currentUser, loadMailboxes, view]);
 
   const initializeReplyState = useCallback(
     (detail: EmailItem, threadItems: EmailItem[]) => {
@@ -511,6 +548,7 @@ export function App() {
     setAppError("");
     try {
       await apiPost("/api/settings", {
+        interface_language: language,
         summary_language: language,
       });
       setSummaryLanguage(language);
@@ -545,6 +583,117 @@ export function App() {
     } catch (error) {
       setScanSinceDate(previousValue);
       setAppError(getErrorMessage(error, "Could not save scan start date."));
+    }
+  }
+
+  function startMailboxEdit(mailbox: MailboxItem) {
+    setEditingMailboxId(mailbox.id);
+    setMailboxForm({
+      name: mailbox.name,
+      email_address: mailbox.email_address,
+      imap_host: mailbox.imap_host,
+      imap_port: String(mailbox.imap_port),
+      imap_username: mailbox.imap_username,
+      imap_password: "",
+      smtp_host: mailbox.smtp_host,
+      smtp_port: String(mailbox.smtp_port),
+      smtp_username: mailbox.smtp_username,
+      smtp_password: "",
+      smtp_use_tls: mailbox.smtp_use_tls,
+      smtp_use_ssl: mailbox.smtp_use_ssl,
+      enabled: mailbox.enabled,
+      is_default_outgoing: mailbox.is_default_outgoing,
+    });
+  }
+
+  async function saveMailbox() {
+    const normalizedEmail = mailboxForm.email_address.trim().toLowerCase();
+    if (!normalizedEmail || !mailboxForm.imap_host.trim() || !mailboxForm.smtp_host.trim()) {
+      setAppError("Mailbox email, IMAP host, and SMTP host are required.");
+      return;
+    }
+    if (!editingMailboxId && (!mailboxForm.imap_password.trim() || !mailboxForm.smtp_password.trim())) {
+      setAppError("IMAP and SMTP passwords are required when creating a mailbox.");
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      name: mailboxForm.name.trim() || normalizedEmail,
+      email_address: normalizedEmail,
+      imap_host: mailboxForm.imap_host.trim(),
+      imap_port: Number(mailboxForm.imap_port || "993"),
+      imap_username: mailboxForm.imap_username.trim() || normalizedEmail,
+      smtp_host: mailboxForm.smtp_host.trim(),
+      smtp_port: Number(mailboxForm.smtp_port || "465"),
+      smtp_username: mailboxForm.smtp_username.trim() || normalizedEmail,
+      smtp_use_tls: mailboxForm.smtp_use_tls,
+      smtp_use_ssl: mailboxForm.smtp_use_ssl,
+      enabled: mailboxForm.enabled,
+      is_default_outgoing: mailboxForm.is_default_outgoing,
+    };
+    if (mailboxForm.imap_password.trim()) payload.imap_password = mailboxForm.imap_password.trim();
+    if (mailboxForm.smtp_password.trim()) payload.smtp_password = mailboxForm.smtp_password.trim();
+
+    setAppError("");
+    setMailboxSaving(true);
+    try {
+      if (editingMailboxId) {
+        await apiPut(`/api/mailboxes/${editingMailboxId}`, payload);
+        setAppSuccess("Mailbox updated.");
+      } else {
+        await apiPost("/api/mailboxes", payload);
+        setAppSuccess("Mailbox added.");
+      }
+      resetMailboxEditor();
+      await loadMailboxes();
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not save mailbox."));
+    } finally {
+      setMailboxSaving(false);
+    }
+  }
+
+  async function deleteMailbox(mailboxId: string) {
+    setAppError("");
+    setMailboxActionLoadingId(mailboxId);
+    try {
+      await apiDelete(`/api/mailboxes/${mailboxId}`);
+      if (editingMailboxId === mailboxId) {
+        resetMailboxEditor();
+      }
+      setAppSuccess("Mailbox deleted.");
+      await loadMailboxes();
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not delete mailbox."));
+    } finally {
+      setMailboxActionLoadingId(null);
+    }
+  }
+
+  async function testMailbox(mailboxId: string) {
+    setAppError("");
+    setMailboxActionLoadingId(mailboxId);
+    try {
+      await apiPost(`/api/mailboxes/${mailboxId}/test-connection`, {});
+      setAppSuccess("Mailbox connection verified.");
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not test mailbox connection."));
+    } finally {
+      setMailboxActionLoadingId(null);
+    }
+  }
+
+  async function scanMailbox(mailboxId: string) {
+    setAppError("");
+    setMailboxActionLoadingId(mailboxId);
+    try {
+      await apiPost(`/api/mailboxes/${mailboxId}/scan`, {});
+      setAppSuccess("Mailbox scan started.");
+      await loadEmails();
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not start mailbox scan."));
+    } finally {
+      setMailboxActionLoadingId(null);
     }
   }
 
@@ -631,6 +780,19 @@ export function App() {
             onSignatureChange={setSettingsSignature}
             onSaveSignature={() => void saveSignature()}
             savingSignature={savingSignature}
+            mailboxes={mailboxes}
+            mailboxesLoading={mailboxesLoading}
+            mailboxForm={mailboxForm}
+            editingMailboxId={editingMailboxId}
+            mailboxSaving={mailboxSaving}
+            mailboxActionLoadingId={mailboxActionLoadingId}
+            onMailboxFormChange={setMailboxForm}
+            onMailboxEdit={startMailboxEdit}
+            onMailboxCancelEdit={resetMailboxEditor}
+            onMailboxSave={() => void saveMailbox()}
+            onMailboxDelete={(mailboxId) => void deleteMailbox(mailboxId)}
+            onMailboxScan={(mailboxId) => void scanMailbox(mailboxId)}
+            onMailboxTest={(mailboxId) => void testMailbox(mailboxId)}
             onLogout={() => void handleLogout()}
             actionLoading={actionLoading}
           />

@@ -24,7 +24,7 @@ Startup also serializes schema migrations with a dedicated lock before the API o
 
 ```bash
 cd backend
-alembic upgrade head
+python -m app.manage migrate
 ```
 
 ## Admin Operations: Backup and Recovery

@@ -14,7 +14,7 @@ from app.api.routes.reports import router as reports_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.stats import router as stats_router
 from app.api.routes.users import router as users_router
-from app.config import DATA_DIR, settings
+from app.config import DATA_DIR, get_effective_settings, settings
 from app.core.process_lock import acquire_process_lock, release_process_lock
 from app.core.logging import configure_logging
 from app.db import create_tables, reset_current_mailbox_id, resolve_mailbox_id_from_request, set_current_mailbox_id
@@ -30,15 +30,16 @@ async def lifespan(app: FastAPI):
     configure_logging(settings.debug)
     create_tables()
     ensure_default_admin()
+    runtime_settings = get_effective_settings()
     background_lock = acquire_process_lock(DATA_DIR / "background-services.lock")
     app.state.background_lock = background_lock
 
     scheduler = None
     mail_watchers = None
     if background_lock.acquired:
-        if settings.run_background_jobs:
+        if runtime_settings.run_background_jobs:
             scheduler = start_scheduler(app)
-        if settings.run_mail_watchers:
+        if runtime_settings.run_mail_watchers:
             mail_watchers = start_mail_watchers()
     else:
         logger.info("Background services already owned by another process; skipping local scheduler/watchers start")

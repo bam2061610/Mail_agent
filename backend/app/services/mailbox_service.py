@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import inspect
+
 import app.db as app_db
 from app.config import get_effective_settings
 from app.models.mailbox_account import MailboxAccount
@@ -36,7 +38,8 @@ def get_thread_lookup_keys(email) -> list[str]:
 
 
 def list_mailboxes(redact_secrets: bool = True) -> list[dict[str, Any]]:
-    _ensure_mailbox_table()
+    if not _mailbox_table_exists():
+        return []
     db = app_db.SessionLocal()
     try:
         rows = (
@@ -62,7 +65,8 @@ def list_mailboxes(redact_secrets: bool = True) -> list[dict[str, Any]]:
 
 
 def get_mailbox(mailbox_id: str, redact_secrets: bool = True) -> dict[str, Any] | None:
-    _ensure_mailbox_table()
+    if not _mailbox_table_exists():
+        return None
     db = app_db.SessionLocal()
     try:
         row = db.get(MailboxAccount, mailbox_id)
@@ -283,6 +287,20 @@ def _mailbox_to_dict(mailbox: MailboxAccount | Any) -> dict[str, Any]:
 
 
 def _ensure_mailbox_table() -> None:
-    from app.models import mailbox_account  # noqa: F401
+    if _mailbox_table_exists():
+        return
+    app_db.create_tables()
+    if _mailbox_table_exists():
+        return
+    # Legacy or manually modified environments can report a current Alembic revision
+    # while still missing this table. Create just the mailbox table as a targeted recovery.
+    MailboxAccount.__table__.create(bind=app_db.engine, checkfirst=True)
+    if not _mailbox_table_exists():
+        raise RuntimeError("Mailbox schema is unavailable after migration bootstrap")
 
-    app_db.Base.metadata.create_all(bind=app_db.engine)
+
+def _mailbox_table_exists() -> bool:
+    try:
+        return "mailbox_accounts" in inspect(app_db.engine).get_table_names()
+    except Exception:  # noqa: BLE001
+        return False

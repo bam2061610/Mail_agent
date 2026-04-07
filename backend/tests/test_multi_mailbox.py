@@ -114,3 +114,41 @@ def test_imap_scanner_with_mocked_imap(db_session, monkeypatch):
     )()
     summary = scan_inbox(db_session, settings)
     assert summary.created_count == 1
+
+
+def test_mailbox_service_reads_without_hidden_schema_bootstrap(db_session, monkeypatch):
+    from sqlalchemy import text
+
+    import app.db as app_db
+    import app.services.mailbox_service as mailbox_service
+
+    original_create_tables = app_db.create_tables
+    create_tables_calls = 0
+
+    def create_tables_spy():
+        nonlocal create_tables_calls
+        create_tables_calls += 1
+        original_create_tables()
+
+    monkeypatch.setattr(app_db, "create_tables", create_tables_spy)
+
+    db_session.execute(text("DROP TABLE mailbox_accounts"))
+    db_session.commit()
+
+    assert mailbox_service.list_mailboxes() == []
+    assert mailbox_service.get_mailbox("missing-id") is None
+    assert create_tables_calls == 0
+
+    created = mailbox_service.create_mailbox(
+        {
+            "name": "Recreated mailbox",
+            "email_address": "restored@example.com",
+            "imap_host": "imap.restored",
+            "imap_password": "secret",
+            "smtp_host": "smtp.restored",
+            "smtp_password": "secret",
+        }
+    )
+
+    assert create_tables_calls == 1
+    assert created["email_address"] == "restored@example.com"

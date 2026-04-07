@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.core.process_lock import ProcessLock
 
@@ -26,8 +27,11 @@ def test_worker_starts_and_stops_background_services(monkeypatch, tmp_path: Path
     monkeypatch.setattr(worker, "stop_scheduler", lambda scheduler: calls.append(f"stop_scheduler:{scheduler}"))
     monkeypatch.setattr(worker, "start_mail_watchers", lambda: calls.append("start_mail_watchers") or "watchers")
     monkeypatch.setattr(worker, "stop_mail_watchers", lambda manager: calls.append(f"stop_mail_watchers:{manager}"))
-    monkeypatch.setattr(worker.settings, "run_background_jobs", True, raising=False)
-    monkeypatch.setattr(worker.settings, "run_mail_watchers", True, raising=False)
+    monkeypatch.setattr(
+        worker,
+        "get_effective_settings",
+        lambda: SimpleNamespace(run_background_jobs=True, run_mail_watchers=True, scan_interval_minutes=5),
+    )
 
     result = worker.run_worker(stop_event=stop_event, install_signal_handlers=False)
 
@@ -53,8 +57,11 @@ def test_worker_exits_cleanly_when_lock_is_held(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(worker, "start_scheduler", lambda _config: calls.append("start_scheduler"))
     monkeypatch.setattr(worker, "start_mail_watchers", lambda: calls.append("start_mail_watchers"))
-    monkeypatch.setattr(worker.settings, "run_background_jobs", True, raising=False)
-    monkeypatch.setattr(worker.settings, "run_mail_watchers", True, raising=False)
+    monkeypatch.setattr(
+        worker,
+        "get_effective_settings",
+        lambda: SimpleNamespace(run_background_jobs=True, run_mail_watchers=True, scan_interval_minutes=5),
+    )
 
     result = worker.run_worker(stop_event=threading.Event(), install_signal_handlers=False)
 

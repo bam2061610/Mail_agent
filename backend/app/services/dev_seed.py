@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from app.db import SessionLocal, create_tables
@@ -9,11 +10,11 @@ from app.models.task import Task
 from app.services.user_service import create_user, get_user_by_email
 
 
-def seed_demo_data() -> dict[str, int]:
+def seed_demo_data() -> dict[str, int | dict[str, str]]:
     create_tables()
     db = SessionLocal()
     try:
-        _ensure_demo_users(db)
+        created_users = _ensure_demo_users(db)
         _clear_demo_records(db)
 
         now = datetime.now(timezone.utc)
@@ -104,7 +105,10 @@ def seed_demo_data() -> dict[str, int]:
             )
         )
         db.commit()
-        return {"emails": len(emails), "tasks": len(tasks), "contacts": 1}
+        result: dict[str, int | dict[str, str]] = {"emails": len(emails), "tasks": len(tasks), "contacts": 1}
+        if created_users:
+            result["created_users"] = created_users
+        return result
     finally:
         db.close()
 
@@ -122,11 +126,17 @@ def reset_demo_data() -> dict[str, int]:
         db.close()
 
 
-def _ensure_demo_users(db) -> None:
+def _ensure_demo_users(db) -> dict[str, str]:
+    created_users: dict[str, str] = {}
     if get_user_by_email(db, "admin@orhun.local") is None:
-        create_user(db, "admin@orhun.local", "Default Admin", "admin123", role="admin")
+        admin_password = secrets.token_urlsafe(12)
+        create_user(db, "admin@orhun.local", "Default Admin", admin_password, role="admin")
+        created_users["admin@orhun.local"] = admin_password
     if get_user_by_email(db, "operator@orhun.local") is None:
-        create_user(db, "operator@orhun.local", "Demo Operator", "operator123", role="operator")
+        operator_password = secrets.token_urlsafe(12)
+        create_user(db, "operator@orhun.local", "Demo Operator", operator_password, role="operator")
+        created_users["operator@orhun.local"] = operator_password
+    return created_users
 
 
 def _clear_demo_records(db) -> None:
@@ -139,3 +149,8 @@ def _clear_demo_records(db) -> None:
 if __name__ == "__main__":
     result = seed_demo_data()
     print(f"Seeded demo data: {result}")
+    created_users = result.get("created_users")
+    if isinstance(created_users, dict) and created_users:
+        print("Generated demo credentials for newly created users:")
+        for email, password in created_users.items():
+            print(f"  {email}: {password}")

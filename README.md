@@ -46,7 +46,7 @@ Manual schema upgrade:
 
 ```bash
 cd backend
-alembic upgrade head
+python -m app.manage migrate
 ```
 
 ## Manual IMAP Scan
@@ -501,7 +501,8 @@ cd backend
 python -m app.services.dev_seed
 ```
 
-This dev-only seed also creates demo users with fixed local passwords for QA convenience.
+This dev-only seed also creates demo users for QA convenience.
+If the demo users do not exist yet, the seed prints freshly generated passwords for them once.
 
 Programmatic usage:
 

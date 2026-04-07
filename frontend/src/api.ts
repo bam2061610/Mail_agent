@@ -62,6 +62,21 @@ export async function apiPost<T = unknown>(url: string, body: unknown): Promise<
   });
 }
 
+export async function apiPut<T = unknown>(url: string, body: unknown): Promise<T> {
+  return requestJson<T>(url, {
+    method: "PUT",
+    headers: buildApiHeaders(true),
+    body: JSON.stringify(body),
+  });
+}
+
+export async function apiDelete<T = unknown>(url: string): Promise<T> {
+  return requestJson<T>(url, {
+    method: "DELETE",
+    headers: buildApiHeaders(false),
+  });
+}
+
 export async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
   try {
     const response = await fetch(buildApiUrl(url), init);

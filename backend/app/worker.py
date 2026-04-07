@@ -5,7 +5,7 @@ import signal
 import threading
 from collections.abc import Callable
 
-from app.config import DATA_DIR, settings
+from app.config import DATA_DIR, get_effective_settings, settings
 from app.core.logging import configure_logging
 from app.core.process_lock import ProcessLock, acquire_process_lock, release_process_lock
 from app.db import create_tables
@@ -25,8 +25,9 @@ def run_worker(
     configure_logging(settings.debug)
     create_tables()
     ensure_default_admin()
+    runtime_settings = get_effective_settings()
 
-    if not settings.run_background_jobs and not settings.run_mail_watchers:
+    if not runtime_settings.run_background_jobs and not runtime_settings.run_mail_watchers:
         logger.info("Worker startup skipped because background jobs and mail watchers are disabled")
         return 0
 
@@ -45,11 +46,11 @@ def run_worker(
     mail_watchers = None
 
     try:
-        if settings.run_background_jobs:
-            scheduler = start_scheduler(settings)
+        if runtime_settings.run_background_jobs:
+            scheduler = start_scheduler(runtime_settings)
             logger.info("Background worker started scheduler")
 
-        if settings.run_mail_watchers:
+        if runtime_settings.run_mail_watchers:
             mail_watchers = start_mail_watchers()
             logger.info("Background worker started mail watchers")
 
