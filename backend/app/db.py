@@ -82,7 +82,13 @@ def resolve_mailbox_id_from_request(request: Request | None = None) -> str:
         mailbox_id = request.query_params.get("mailbox_id") or request.headers.get("X-Mailbox-Id")
         if mailbox_id:
             return str(mailbox_id).strip() or "default"
-    return get_current_mailbox_id()
+    current = get_current_mailbox_id()
+    if current != "default":
+        return current
+    for mid in list_account_database_ids():
+        if mid != "default":
+            return mid
+    return current
 
 
 def get_account_database_url(mailbox_id: str | None = None) -> str:
