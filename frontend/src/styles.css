@@ -95,6 +95,13 @@ textarea {
   padding: 2rem;
 }
 
+.setup-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
 .auth-card {
   width: min(100%, 460px);
   background: var(--panel);
@@ -103,6 +110,103 @@ textarea {
   padding: 1.6rem;
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+}
+
+.setup-card {
+  width: min(100%, 980px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 1.6rem;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  display: grid;
+  gap: 1.2rem;
+}
+
+.setup-header {
+  display: grid;
+  gap: 1rem;
+}
+
+.setup-header h1 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.setup-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.setup-step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.setup-step-chip.is-active {
+  border-color: rgba(10, 132, 255, 0.25);
+  background: rgba(10, 132, 255, 0.12);
+  color: var(--accent);
+}
+
+.setup-step-chip.is-complete {
+  border-color: rgba(21, 127, 59, 0.2);
+  background: rgba(21, 127, 59, 0.1);
+  color: var(--success);
+}
+
+.setup-step-grid,
+.setup-confirm-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.setup-field-stack {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.setup-inline-actions,
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.setup-actions {
+  justify-content: space-between;
+}
+
+.setup-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.25rem;
+}
+
+.setup-summary-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+}
+
+.setup-summary-card strong {
+  font-size: 1rem;
+}
+
+.setup-summary-card.is-wide {
+  grid-column: 1 / -1;
 }
 
 .auth-mark {
@@ -1195,6 +1299,11 @@ textarea {
   font-size: 0.85rem;
 }
 
+.field-error {
+  color: var(--danger);
+  font-size: 0.84rem;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1529,7 +1638,8 @@ textarea {
   }
 
   .summary-grid,
-  .settings-grid {
+  .settings-grid,
+  .setup-confirm-grid {
     grid-template-columns: 1fr;
   }
 

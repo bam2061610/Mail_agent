@@ -1,6 +1,7 @@
 import hashlib
 import imaplib
 import json
+import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from email import policy
@@ -10,8 +11,10 @@ from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime, parseaddr
 
 from sqlalchemy.orm import Session
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_effective_settings
+from app.exceptions import ImapError
 from app.models.email import Email
 from app.models.action_log import ActionLog
 from app.db import open_account_session
@@ -20,6 +23,8 @@ from app.services.language_service import update_email_languages
 from app.services.mailbox_service import get_enabled_mailbox_configs
 from app.services.diagnostics_service import mark_mailbox_scan_result
 from app.services.rule_engine import apply_rules_to_email
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -75,15 +80,28 @@ class MultiMailboxScanSummary:
     errors: list[str]
 
 
+@retry(
+    retry=retry_if_exception_type(ImapError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True,
+)
 def connect_imap(settings) -> imaplib.IMAP4_SSL:
     imap_username = getattr(settings, "imap_username", None) or getattr(settings, "imap_user", None)
     imap_password = getattr(settings, "imap_password", None)
     if not settings.imap_host or not imap_username or not imap_password:
-        raise ValueError("IMAP credentials are not fully configured")
+        raise ImapError("IMAP credentials are not fully configured")
 
-    connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
-    connection.login(imap_username, imap_password)
-    return connection
+    try:
+        connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
+        connection.login(imap_username, imap_password)
+        return connection
+    except imaplib.IMAP4.error as exc:
+        logger.warning("IMAP authentication failed", exc_info=True)
+        raise ImapError(str(exc)) from exc
+    except OSError as exc:
+        logger.warning("IMAP connection failed", exc_info=True)
+        raise ImapError(str(exc)) from exc
 
 
 MAX_INITIAL_SCAN_DAYS = 1
@@ -166,6 +184,9 @@ def _scan_folder(
         return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
 
     message_uids = [uid for uid in data[0].split() if uid]
+    max_emails_per_scan = max(1, int(getattr(get_effective_settings(), "max_emails_per_scan", 200) or 200))
+    if len(message_uids) > max_emails_per_scan:
+        message_uids = message_uids[-max_emails_per_scan:]
     scanned_messages = len(message_uids)
 
     for uid in message_uids:
@@ -199,6 +220,7 @@ def _scan_folder(
                 skipped_count += 1
         except Exception as exc:  # noqa: BLE001
             db_session.rollback()
+            logger.warning("IMAP folder scan failed: folder=%s", folder, exc_info=True)
             errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: {exc}")
 
     return scanned_messages, fetched_messages, created_count, skipped_count, errors
@@ -235,7 +257,7 @@ def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
             if "sent" in avail.lower():
                 return avail
     except Exception:  # noqa: BLE001
-        pass
+        logger.warning("Optional sent-folder detection failed", exc_info=True)
     return None
 
 

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_effective_settings
 from app.db import get_db
+from app.exceptions import SmtpError
 from app.models.action_log import ActionLog
 from app.models.attachment import Attachment
 from app.models.contact import Contact
@@ -304,11 +305,11 @@ def reply_to_email(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except RuntimeError as exc:
+    except SmtpError as exc:
         raise HTTPException(status_code=502, detail=f"SMTP delivery failed: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Unexpected send failure while replying to email_id=%s", email_id)
-        raise HTTPException(status_code=500, detail=f"Unexpected send failure: {exc}") from exc
+        logger.warning("SMTP delivery failed for email_id=%s", email_id, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"SMTP delivery failed: {exc}") from exc
 
     original_email.status = "replied"
     original_email.requires_reply = False

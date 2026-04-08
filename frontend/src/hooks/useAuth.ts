@@ -17,7 +17,7 @@ type UseAuthResult = {
   actionLoading: string | null;
 };
 
-export function useAuth(): UseAuthResult {
+export function useAuth(enabled = true): UseAuthResult {
   const [authToken, setAuthToken] = useState<string>(() => getStoredAuthToken());
   const [currentUser, setCurrentUser] = useState<UserItem | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -31,6 +31,12 @@ export function useAuth(): UseAuthResult {
     const mutationVersion = authMutationVersionRef.current;
     setAuthLoading(true);
     try {
+      if (!enabled) {
+        if (mutationVersion !== authMutationVersionRef.current) return;
+        setCurrentUser(null);
+        setAuthError("");
+        return;
+      }
       if (!authToken) {
         if (mutationVersion !== authMutationVersionRef.current) return;
         setCurrentUser(null);
@@ -54,12 +60,16 @@ export function useAuth(): UseAuthResult {
       if (mutationVersion !== authMutationVersionRef.current) return;
       setAuthLoading(false);
     }
-  }, [authToken]);
+  }, [authToken, enabled]);
 
   const handleLogin = useCallback(async (event: FormEvent) => {
     event.preventDefault();
     setAuthError("");
     setAuthSuccess("");
+    if (!enabled) {
+      setAuthError("Setup is required before sign-in.");
+      return;
+    }
     if (!loginForm.email.trim() || !loginForm.password) {
       setAuthError("Email and password are required.");
       return;
@@ -78,7 +88,7 @@ export function useAuth(): UseAuthResult {
     } finally {
       setActionLoading(null);
     }
-  }, [loginForm]);
+  }, [enabled, loginForm]);
 
   const handleLogout = useCallback(async () => {
     setActionLoading("auth-logout");

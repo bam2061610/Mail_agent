@@ -302,15 +302,16 @@ def collect_admin_health(
     mailbox_statuses = collect_mailbox_statuses(test_connection=test_mailboxes)
 
     smtp_ready = bool(getattr(settings, "smtp_host", None) and getattr(settings, "smtp_user", None))
-    ai_ready = bool(getattr(settings, "openai_api_key", None))
+    ai_ready = bool(getattr(settings, "deepseek_api_key", None) or getattr(settings, "openai_api_key", None))
     enabled_mailboxes = [item for item in mailbox_statuses if item.get("enabled")]
     any_mailbox_failure = any(item.get("last_failure_at") for item in enabled_mailboxes)
 
     now = datetime.now(timezone.utc)
     last_scan_ok = _parse_iso(scan_state.get("last_success_at"))
     last_analyze_ok = _parse_iso(analyze_state.get("last_success_at"))
-    stale_scan = bool(last_scan_ok and (now - last_scan_ok).total_seconds() > max(3600, int(settings.scan_interval_minutes) * 180))
-    stale_analyze = bool(last_analyze_ok and (now - last_analyze_ok).total_seconds() > max(3600, int(settings.scan_interval_minutes) * 180))
+    scheduler_interval = int(getattr(settings, "scheduler_interval_minutes", getattr(settings, "scan_interval_minutes", 5)))
+    stale_scan = bool(last_scan_ok and (now - last_scan_ok).total_seconds() > max(3600, scheduler_interval * 180))
+    stale_analyze = bool(last_analyze_ok and (now - last_analyze_ok).total_seconds() > max(3600, scheduler_interval * 180))
 
     overall_ok = db_status["ok"] and smtp_ready and ai_ready and not stale_scan and not stale_analyze and not any_mailbox_failure
     scheduler_effective_running = scheduler_running if scheduler_running is not None else bool(scheduler_state.get("running", False))

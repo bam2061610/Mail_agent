@@ -5,16 +5,15 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.config import get_effective_settings
 from app.db import get_global_db
 from app.models.session_token import SessionToken
 from app.models.user import User
 
 TOKEN_TTL_HOURS = 24
-PBKDF2_ITERATIONS = 210_000
 PBKDF2_DIGEST = "sha256"
 logger = logging.getLogger(__name__)
 
@@ -32,34 +31,24 @@ def validate_password_strength(password: str) -> None:
 
 def hash_password(password: str) -> str:
     validate_password_strength(password)
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        PBKDF2_DIGEST,
-        password.encode("utf-8"),
-        bytes.fromhex(salt),
-        PBKDF2_ITERATIONS,
-    )
-    return f"pbkdf2_{PBKDF2_DIGEST}${PBKDF2_ITERATIONS}${salt}${base64.b64encode(digest).decode('ascii')}"
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        prefix, iterations_text, salt, encoded_digest = password_hash.split("$", 3)
-        if not prefix.startswith("pbkdf2_"):
-            return False
-        digest_name = prefix.removeprefix("pbkdf2_")
-        iterations = int(iterations_text)
-    except Exception:  # noqa: BLE001
+    if not password_hash:
         return False
+    if password_hash.startswith("$2"):
+        try:
+            return bool(bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8")))
+        except ValueError:
+            logger.warning("Stored bcrypt password hash could not be verified", exc_info=True)
+            return False
+    return _verify_legacy_pbkdf2(password, password_hash)
 
-    candidate = hashlib.pbkdf2_hmac(
-        digest_name,
-        password.encode("utf-8"),
-        bytes.fromhex(salt),
-        iterations,
-    )
-    expected = base64.b64decode(encoded_digest.encode("ascii"))
-    return hmac.compare_digest(candidate, expected)
+
+def hash_session_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def create_session_token(db_session: Session, user: User) -> str:
@@ -67,7 +56,7 @@ def create_session_token(db_session: Session, user: User) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(hours=TOKEN_TTL_HOURS)
     db_session.add(
         SessionToken(
-            token=token,
+            token_hash=hash_session_token(token),
             user_id=user.id,
             expires_at=expires_at,
         )
@@ -76,7 +65,8 @@ def create_session_token(db_session: Session, user: User) -> str:
 
 
 def revoke_session_token(db_session: Session, token: str) -> None:
-    db_session.query(SessionToken).filter(SessionToken.token == token).delete(synchronize_session=False)
+    token_hash = hash_session_token(token)
+    db_session.query(SessionToken).filter(SessionToken.token_hash == token_hash).delete(synchronize_session=False)
 
 
 def authenticate_user(db_session: Session, email: str, password: str) -> User | None:
@@ -86,6 +76,9 @@ def authenticate_user(db_session: Session, email: str, password: str) -> User | 
         return None
     if not verify_password(password, user.password_hash):
         return None
+
+    if not user.password_hash.startswith("$2"):
+        user.password_hash = hash_password(password)
     user.last_login_at = datetime.now(timezone.utc)
     db_session.add(user)
     db_session.commit()
@@ -94,7 +87,11 @@ def authenticate_user(db_session: Session, email: str, password: str) -> User | 
 
 
 def get_user_by_token(db_session: Session, token: str) -> User | None:
-    record = db_session.query(SessionToken).filter(SessionToken.token == token).first()
+    record = (
+        db_session.query(SessionToken)
+        .filter(SessionToken.token_hash == hash_session_token(token))
+        .first()
+    )
     if record is None:
         return None
     expires_at = _parse_dt(record.expires_at)
@@ -127,9 +124,6 @@ def get_current_user(
 ) -> User:
     token = extract_bearer_token(authorization)
     if not token:
-        user = _maybe_dev_single_user(db)
-        if user is not None:
-            return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
     user = get_user_by_token(db, token)
     if user is None:
@@ -142,9 +136,9 @@ def get_optional_current_user(
     db: Session = Depends(get_global_db),
 ) -> User | None:
     token = extract_bearer_token(authorization)
-    if token:
-        return get_user_by_token(db, token)
-    return _maybe_dev_single_user(db)
+    if not token:
+        return None
+    return get_user_by_token(db, token)
 
 
 def extract_bearer_token(authorization: str | None) -> str | None:
@@ -155,17 +149,6 @@ def extract_bearer_token(authorization: str | None) -> str | None:
         return None
     token = parts[1].strip()
     return token or None
-
-
-def _maybe_dev_single_user(db_session: Session) -> User | None:
-    settings = get_effective_settings()
-    if getattr(settings, "app_env", "development") != "development" or not getattr(settings, "dev_auth_bypass", False):
-        return None
-    users = db_session.query(User).filter(User.is_active.is_(True)).order_by(User.id.asc()).limit(2).all()
-    if len(users) == 1:
-        logger.warning("Dev auth bypass: auto-authenticating as %s", users[0].email)
-        return users[0]
-    return None
 
 
 def _parse_dt(value: datetime | str | None) -> datetime | None:
@@ -182,3 +165,24 @@ def _parse_dt(value: datetime | str | None) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _verify_legacy_pbkdf2(password: str, password_hash: str) -> bool:
+    try:
+        prefix, iterations_text, salt, encoded_digest = password_hash.split("$", 3)
+        if not prefix.startswith("pbkdf2_"):
+            return False
+        digest_name = prefix.removeprefix("pbkdf2_")
+        iterations = int(iterations_text)
+    except ValueError:
+        logger.warning("Stored PBKDF2 password hash could not be parsed", exc_info=True)
+        return False
+
+    candidate = hashlib.pbkdf2_hmac(
+        digest_name or PBKDF2_DIGEST,
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        iterations,
+    )
+    expected = base64.b64decode(encoded_digest.encode("ascii"))
+    return hmac.compare_digest(candidate, expected)

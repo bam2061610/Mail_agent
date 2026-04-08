@@ -2,12 +2,17 @@ import json
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from app.config import get_effective_settings
-from app.db import dispose_database_engines
+from app.db import dispose_database_engines, open_global_session
+from app.models.runtime_setting import RuntimeSetting
 from app.services.diagnostics_service import backend_paths
+from app.services.preference_profile import load_preference_profile
 
 BACKUP_KEEP_DEFAULT = 10
 BACKUP_CONFIG_FILES = [
@@ -16,6 +21,7 @@ BACKUP_CONFIG_FILES = [
     "preference_profile.json",
     "digest_state.json",
 ]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -90,6 +96,7 @@ def create_backup(
         if source_path.exists():
             shutil.copy2(source_path, config_target / filename)
             restored_files.append(filename)
+    restored_files.extend(_export_runtime_config_snapshots(config_target, restored_files))
 
     account_db_ids: list[str] = []
     if paths.account_dbs_dir.exists():
@@ -230,3 +237,59 @@ def _read_manifest(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _export_runtime_config_snapshots(config_target: Path, copied_files: list[str]) -> list[str]:
+    exported: list[str] = []
+    copied_file_names = set(copied_files)
+
+    if "preference_profile.json" not in copied_file_names:
+        profile = load_preference_profile()
+        if profile:
+            _write_json_snapshot(config_target / "preference_profile.json", profile)
+            exported.append("preference_profile.json")
+
+    if "digest_state.json" not in copied_file_names:
+        digest_state = _load_digest_state_snapshot()
+        if digest_state:
+            _write_json_snapshot(config_target / "digest_state.json", digest_state)
+            exported.append("digest_state.json")
+
+    return exported
+
+
+def _load_digest_state_snapshot() -> dict[str, Any]:
+    db = open_global_session()
+    try:
+        rows = (
+            db.execute(
+                select(RuntimeSetting.key, RuntimeSetting.value_json).where(
+                    RuntimeSetting.key.is_not(None),
+                    RuntimeSetting.key.like("digest_state_%"),
+                )
+            )
+            .all()
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to export digest state snapshot for backup", exc_info=True)
+        return {}
+    finally:
+        db.close()
+
+    payload: dict[str, Any] = {}
+    for key, value_json in rows:
+        if not key or not value_json:
+            continue
+        try:
+            payload[str(key)] = json.loads(value_json)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Digest state snapshot contains invalid JSON for key=%s",
+                key,
+                exc_info=True,
+            )
+    return payload
+
+
+def _write_json_snapshot(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

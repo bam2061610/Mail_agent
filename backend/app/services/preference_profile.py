@@ -6,13 +6,16 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.config import DATA_DIR
+from app.db import list_account_database_ids, open_account_session, open_global_session
 from app.models.action_log import ActionLog
+from app.services.settings_service import get_setting, set_setting
 
+PREFERENCE_PROFILE_KEY = "preference_profile"
 PREFERENCE_PROFILE_PATH = DATA_DIR / "preference_profile.json"
 
 
 def rebuild_preference_profile(db_session: Session) -> dict[str, Any]:
-    logs = db_session.query(ActionLog).order_by(ActionLog.created_at.asc()).all()
+    logs = _load_all_action_logs()
     draft_tag_counter: Counter[str] = Counter()
     decision_counter: Counter[str] = Counter()
     language_counter: Counter[str] = Counter()
@@ -58,12 +61,12 @@ def rebuild_preference_profile(db_session: Session) -> dict[str, Any]:
 
 
 def load_preference_profile() -> dict[str, Any] | None:
-    if not PREFERENCE_PROFILE_PATH.exists():
-        return None
+    db = open_global_session()
     try:
-        return json.loads(PREFERENCE_PROFILE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+        stored = get_setting(db, PREFERENCE_PROFILE_KEY)
+        return stored if isinstance(stored, dict) else None
+    finally:
+        db.close()
 
 
 def get_preference_profile(db_session: Session) -> dict[str, Any]:
@@ -83,8 +86,23 @@ def build_preference_prompt_block(profile: dict[str, Any] | None) -> str:
 
 
 def _save_profile(profile: dict[str, Any]) -> None:
-    PREFERENCE_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PREFERENCE_PROFILE_PATH.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+    db = open_global_session()
+    try:
+        set_setting(db, PREFERENCE_PROFILE_KEY, profile)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _load_all_action_logs() -> list[ActionLog]:
+    logs: list[ActionLog] = []
+    for mailbox_id in list_account_database_ids():
+        db_session = open_account_session(mailbox_id)
+        try:
+            logs.extend(db_session.query(ActionLog).order_by(ActionLog.created_at.asc()).all())
+        finally:
+            db_session.close()
+    return logs
 
 
 def _parse_details(raw_details: str | None) -> dict[str, Any]:

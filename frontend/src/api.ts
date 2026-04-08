@@ -187,11 +187,17 @@ async function refreshAccessToken(): Promise<string | null> {
 async function extractErrorDetail(response: Response): Promise<string> {
   let detail = `${response.status} ${response.statusText}`;
   try {
-    const data = (await response.json()) as { detail?: string | { message?: string } };
+    const data = (await response.json()) as {
+      detail?: string | { message?: string };
+      error?: string;
+      message?: string;
+    };
     if (typeof data?.detail === "string" && data.detail.trim()) return data.detail;
     if (data?.detail && typeof data.detail === "object" && typeof data.detail.message === "string" && data.detail.message.trim()) {
       return data.detail.message;
     }
+    if (typeof data?.error === "string" && data.error.trim()) return data.error;
+    if (typeof data?.message === "string" && data.message.trim()) return data.message;
   } catch {
     // continue
   }

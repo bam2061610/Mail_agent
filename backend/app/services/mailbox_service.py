@@ -89,74 +89,59 @@ def create_mailbox(payload: dict[str, Any]) -> dict[str, Any]:
     _ensure_mailbox_table()
     db = app_db.SessionLocal()
     try:
-        existing = db.query(MailboxAccount).all()
-        now = datetime.now(timezone.utc)
-        mailbox = MailboxAccount(
-            id=str(payload.get("id") or uuid4()),
-            name=str(payload.get("name") or payload.get("email_address") or "Mailbox").strip(),
-            email_address=str(payload.get("email_address") or "").strip().lower(),
-            imap_host=str(payload.get("imap_host") or "").strip(),
-            imap_port=int(payload.get("imap_port") or 993),
-            imap_username=str(payload.get("imap_username") or payload.get("email_address") or "").strip(),
-            imap_password=str(payload.get("imap_password") or "").strip(),
-            smtp_host=str(payload.get("smtp_host") or "").strip(),
-            smtp_port=int(payload.get("smtp_port") or 465),
-            smtp_username=str(payload.get("smtp_username") or payload.get("email_address") or "").strip(),
-            smtp_password=str(payload.get("smtp_password") or "").strip(),
-            smtp_use_tls=bool(payload.get("smtp_use_tls", True)),
-            smtp_use_ssl=bool(payload.get("smtp_use_ssl", True)),
-            enabled=bool(payload.get("enabled", True)),
-            is_default_outgoing=bool(payload.get("is_default_outgoing", not existing)),
-            created_at=now,
-            updated_at=now,
-        )
-        if mailbox.is_default_outgoing:
-            for item in existing:
-                item.is_default_outgoing = False
-        db.add(mailbox)
-        db.commit()
-        app_db.ensure_account_database(mailbox.id)
-        return get_mailbox(mailbox.id, redact_secrets=True) or {}
+        return _create_mailbox_with_session(db, payload, commit=True)
     finally:
         db.close()
+
+
+def create_mailbox_with_session(db, payload: dict[str, Any]) -> dict[str, Any]:
+    return _create_mailbox_with_session(db, payload, commit=False)
+
+
+def _create_mailbox_with_session(db, payload: dict[str, Any], *, commit: bool) -> dict[str, Any]:
+    existing = db.query(MailboxAccount).all()
+    now = datetime.now(timezone.utc)
+    mailbox = MailboxAccount(
+        id=str(payload.get("id") or uuid4()),
+        name=str(payload.get("name") or payload.get("email_address") or "Mailbox").strip(),
+        email_address=str(payload.get("email_address") or "").strip().lower(),
+        imap_host=str(payload.get("imap_host") or "").strip(),
+        imap_port=int(payload.get("imap_port") or 993),
+        imap_username=str(payload.get("imap_username") or payload.get("email_address") or "").strip(),
+        imap_password=str(payload.get("imap_password") or "").strip(),
+        smtp_host=str(payload.get("smtp_host") or "").strip(),
+        smtp_port=int(payload.get("smtp_port") or 465),
+        smtp_username=str(payload.get("smtp_username") or payload.get("email_address") or "").strip(),
+        smtp_password=str(payload.get("smtp_password") or "").strip(),
+        smtp_use_tls=bool(payload.get("smtp_use_tls", True)),
+        smtp_use_ssl=bool(payload.get("smtp_use_ssl", True)),
+        enabled=bool(payload.get("enabled", True)),
+        is_default_outgoing=bool(payload.get("is_default_outgoing", not existing)),
+        created_at=now,
+        updated_at=now,
+    )
+    if mailbox.is_default_outgoing:
+        for item in existing:
+            item.is_default_outgoing = False
+    db.add(mailbox)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    app_db.ensure_account_database(mailbox.id)
+    payload = _mailbox_to_dict(mailbox)
+    payload["has_imap_password"] = bool(payload.get("imap_password"))
+    payload["has_smtp_password"] = bool(payload.get("smtp_password"))
+    for field in SECRET_FIELDS:
+        payload.pop(field, None)
+    return payload
 
 
 def update_mailbox(mailbox_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     _ensure_mailbox_table()
     db = app_db.SessionLocal()
     try:
-        mailbox = db.get(MailboxAccount, mailbox_id)
-        if mailbox is None:
-            return None
-
-        for key in [
-            "name",
-            "email_address",
-            "imap_host",
-            "imap_port",
-            "imap_username",
-            "smtp_host",
-            "smtp_port",
-            "smtp_username",
-            "enabled",
-            "is_default_outgoing",
-            "smtp_use_tls",
-            "smtp_use_ssl",
-        ]:
-            if key in payload and payload[key] is not None:
-                setattr(mailbox, key, payload[key])
-        if payload.get("imap_password"):
-            mailbox.imap_password = str(payload["imap_password"])
-        if payload.get("smtp_password"):
-            mailbox.smtp_password = str(payload["smtp_password"])
-        mailbox.updated_at = datetime.now(timezone.utc)
-
-        if mailbox.is_default_outgoing:
-            for item in db.query(MailboxAccount).filter(MailboxAccount.id != mailbox_id).all():
-                item.is_default_outgoing = False
-
-        db.commit()
-        return get_mailbox(mailbox_id, redact_secrets=True)
+        return _update_mailbox_with_session(db, mailbox_id, payload)
     finally:
         db.close()
 
@@ -165,18 +150,65 @@ def delete_mailbox(mailbox_id: str) -> bool:
     _ensure_mailbox_table()
     db = app_db.SessionLocal()
     try:
-        mailbox = db.get(MailboxAccount, mailbox_id)
-        if mailbox is None:
-            return False
-        db.delete(mailbox)
-        db.flush()
-        remaining = db.query(MailboxAccount).order_by(MailboxAccount.created_at.asc()).all()
-        if remaining and not any(item.is_default_outgoing for item in remaining):
-            remaining[0].is_default_outgoing = True
-        db.commit()
-        return True
+        return _delete_mailbox_with_session(db, mailbox_id)
     finally:
         db.close()
+
+
+def update_mailbox_with_session(db, mailbox_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    return _update_mailbox_with_session(db, mailbox_id, payload)
+
+
+def delete_mailbox_with_session(db, mailbox_id: str) -> bool:
+    return _delete_mailbox_with_session(db, mailbox_id)
+
+
+def _update_mailbox_with_session(db, mailbox_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    mailbox = db.get(MailboxAccount, mailbox_id)
+    if mailbox is None:
+        return None
+
+    for key in [
+        "name",
+        "email_address",
+        "imap_host",
+        "imap_port",
+        "imap_username",
+        "smtp_host",
+        "smtp_port",
+        "smtp_username",
+        "enabled",
+        "is_default_outgoing",
+        "smtp_use_tls",
+        "smtp_use_ssl",
+    ]:
+        if key in payload and payload[key] is not None:
+            setattr(mailbox, key, payload[key])
+    if payload.get("imap_password"):
+        mailbox.imap_password = str(payload["imap_password"])
+    if payload.get("smtp_password"):
+        mailbox.smtp_password = str(payload["smtp_password"])
+    mailbox.updated_at = datetime.now(timezone.utc)
+
+    if mailbox.is_default_outgoing:
+        for item in db.query(MailboxAccount).filter(MailboxAccount.id != mailbox_id).all():
+            item.is_default_outgoing = False
+
+    db.commit()
+    return get_mailbox(mailbox_id, redact_secrets=True)
+
+
+def _delete_mailbox_with_session(db, mailbox_id: str) -> bool:
+    mailbox = db.get(MailboxAccount, mailbox_id)
+    if mailbox is None:
+        return False
+    db.delete(mailbox)
+    db.flush()
+    remaining = db.query(MailboxAccount).order_by(MailboxAccount.created_at.asc()).all()
+    if remaining and not any(item.is_default_outgoing for item in remaining):
+        remaining[0].is_default_outgoing = True
+    db.commit()
+    return True
 
 
 def get_enabled_mailbox_configs() -> list[SimpleNamespace]:

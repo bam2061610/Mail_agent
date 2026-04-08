@@ -1,8 +1,9 @@
 import json
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.rate_limiter import limiter
 from app.db import get_global_db
 from app.models.action_log import ActionLog
 from app.models.user import User
@@ -27,8 +28,13 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=AuthLoginResponse)
-def login(request: AuthLoginRequest, db: Session = Depends(get_global_db)) -> AuthLoginResponse:
-    user = authenticate_user(db, request.email, request.password)
+@limiter.limit("10/minute")
+def login(
+    request: Request,
+    payload: AuthLoginRequest,
+    db: Session = Depends(get_global_db),
+) -> AuthLoginResponse:
+    user = authenticate_user(db, payload.email, payload.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     token = create_session_token(db, user)

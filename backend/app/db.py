@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import time
 from collections.abc import Generator
 from contextvars import ContextVar, Token
@@ -22,6 +23,7 @@ ALEMBIC_INI_PATH = BACKEND_DIR / "alembic.ini"
 ALEMBIC_SCRIPT_PATH = BACKEND_DIR / "alembic"
 SCHEMA_LOCK_PATH = DATA_DIR / "schema-migrations.lock"
 SCHEMA_LOCK_WAIT_SECONDS = 60.0
+logger = logging.getLogger(__name__)
 
 
 def _sqlite_connect_args(database_url: str) -> dict[str, bool]:
@@ -169,13 +171,13 @@ def dispose_database_engines() -> None:
     try:
         engine.dispose()
     except Exception:  # noqa: BLE001
-        pass
+        logger.warning("Failed to dispose primary database engine", exc_info=True)
 
     for account_engine in list(_ACCOUNT_ENGINE_CACHE.values()):
         try:
             account_engine.dispose()
         except Exception:  # noqa: BLE001
-            pass
+            logger.warning("Failed to dispose account database engine", exc_info=True)
 
     _ACCOUNT_ENGINE_CACHE.clear()
     _ACCOUNT_SESSION_CACHE.clear()
@@ -196,9 +198,11 @@ def _load_models() -> None:
         contact,
         email,
         mailbox_account,
+        rule,
         runtime_setting,
         session_token,
         task,
+        template,
         user,
     )
 
@@ -213,7 +217,7 @@ def _discover_mailbox_ids() -> list[str]:
             if mailbox_id and mailbox_id not in mailbox_ids:
                 mailbox_ids.append(mailbox_id)
     except Exception:  # noqa: BLE001
-        pass
+        logger.warning("Failed to discover mailbox ids for account database migration", exc_info=True)
     return mailbox_ids
 
 

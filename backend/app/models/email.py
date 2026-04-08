@@ -1,13 +1,29 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
+EMAIL_STATUS_VALUES = (
+    "new",
+    "read",
+    "reply_later",
+    "processed",
+    "replied",
+    "archived",
+    "spam",
+)
+
 
 class Email(Base):
     __tablename__ = "emails"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('new','read','reply_later','processed','replied','archived','spam')",
+            name="ck_emails_status_valid",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     message_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)

@@ -3,18 +3,23 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import DATA_DIR
+from app.db import open_global_session
 from app.models.action_log import ActionLog
 from app.models.email import Email
+from app.models.rule import Rule
 
 logger = logging.getLogger(__name__)
 
 RULES_FILE_PATH = DATA_DIR / "rules.json"
+RULES_MIGRATED_FILE_PATH = DATA_DIR / "rules.json.migrated"
 SUPPORTED_CONDITIONS = {
     "sender_email",
     "sender_domain",
@@ -46,73 +51,96 @@ class RuleEvaluationResult:
 
 
 def list_rules() -> list[dict[str, Any]]:
-    rules = _load_rules()
-    return sorted(rules, key=lambda item: (int(item.get("order", 0)), str(item.get("created_at", ""))))
+    _migrate_legacy_rules_if_needed()
+    db = open_global_session()
+    try:
+        rows = db.execute(select(Rule).order_by(Rule.priority.asc(), Rule.created_at.asc())).scalars().all()
+        return [_rule_to_dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 def create_rule(payload: dict[str, Any]) -> dict[str, Any]:
-    rules = _load_rules()
-    now = datetime.now(timezone.utc).isoformat()
-    order = payload.get("order")
-    if order is None:
-        order = max([int(rule.get("order", 0)) for rule in rules], default=-1) + 1
-
-    rule = {
-        "id": payload.get("id") or str(uuid4()),
-        "name": str(payload.get("name") or "Untitled rule").strip() or "Untitled rule",
-        "enabled": bool(payload.get("enabled", True)),
-        "order": int(order),
-        "conditions": _sanitize_conditions(payload.get("conditions")),
-        "actions": _sanitize_actions(payload.get("actions")),
-        "created_at": payload.get("created_at") or now,
-        "updated_at": now,
-    }
-    rules.append(rule)
-    _save_rules(rules)
-    return rule
+    _migrate_legacy_rules_if_needed()
+    db = open_global_session()
+    try:
+        now = datetime.now(timezone.utc)
+        current_priority = payload.get("order")
+        if current_priority is None:
+            current_priority = (
+                db.execute(select(Rule.priority).order_by(Rule.priority.desc()).limit(1)).scalar_one_or_none() or -1
+            ) + 1
+        rule = Rule(
+            id=str(payload.get("id") or uuid4()),
+            name=str(payload.get("name") or "Untitled rule").strip() or "Untitled rule",
+            enabled=bool(payload.get("enabled", True)),
+            priority=int(current_priority),
+            conditions_json=json.dumps(_sanitize_conditions(payload.get("conditions")), ensure_ascii=False),
+            actions_json=json.dumps(_sanitize_actions(payload.get("actions")), ensure_ascii=False),
+            created_at=payload.get("created_at") or now,
+            updated_at=now,
+        )
+        db.add(rule)
+        db.commit()
+        db.refresh(rule)
+        return _rule_to_dict(rule)
+    finally:
+        db.close()
 
 
 def update_rule(rule_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-    rules = _load_rules()
-    for index, current in enumerate(rules):
-        if current.get("id") != rule_id:
-            continue
-
-        updated = current.copy()
-        if "name" in payload:
-            updated["name"] = str(payload["name"]).strip() or updated["name"]
+    _migrate_legacy_rules_if_needed()
+    db = open_global_session()
+    try:
+        rule = db.get(Rule, rule_id)
+        if rule is None:
+            return None
+        if "name" in payload and payload["name"] is not None:
+            rule.name = str(payload["name"]).strip() or rule.name
         if "enabled" in payload and payload["enabled"] is not None:
-            updated["enabled"] = bool(payload["enabled"])
+            rule.enabled = bool(payload["enabled"])
         if "order" in payload and payload["order"] is not None:
-            updated["order"] = int(payload["order"])
+            rule.priority = int(payload["order"])
         if "conditions" in payload and payload["conditions"] is not None:
-            updated["conditions"] = _sanitize_conditions(payload["conditions"])
+            rule.conditions_json = json.dumps(_sanitize_conditions(payload["conditions"]), ensure_ascii=False)
         if "actions" in payload and payload["actions"] is not None:
-            updated["actions"] = _sanitize_actions(payload["actions"])
-        updated["updated_at"] = datetime.now(timezone.utc).isoformat()
-        rules[index] = updated
-        _save_rules(rules)
-        return updated
-    return None
+            rule.actions_json = json.dumps(_sanitize_actions(payload["actions"]), ensure_ascii=False)
+        rule.updated_at = datetime.now(timezone.utc)
+        db.add(rule)
+        db.commit()
+        db.refresh(rule)
+        return _rule_to_dict(rule)
+    finally:
+        db.close()
 
 
 def delete_rule(rule_id: str) -> bool:
-    rules = _load_rules()
-    filtered = [rule for rule in rules if rule.get("id") != rule_id]
-    if len(filtered) == len(rules):
-        return False
-    _save_rules(filtered)
-    return True
+    _migrate_legacy_rules_if_needed()
+    db = open_global_session()
+    try:
+        rule = db.get(Rule, rule_id)
+        if rule is None:
+            return False
+        db.delete(rule)
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 def reorder_rules(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    _migrate_legacy_rules_if_needed()
     order_map = {str(item.get("id")): int(item.get("order", 0)) for item in items if item.get("id")}
-    rules = _load_rules()
-    for rule in rules:
-        if rule.get("id") in order_map:
-            rule["order"] = order_map[rule["id"]]
-            rule["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _save_rules(rules)
+    db = open_global_session()
+    try:
+        rows = db.execute(select(Rule).where(Rule.id.in_(tuple(order_map.keys())))).scalars().all()
+        for row in rows:
+            row.priority = order_map[row.id]
+            row.updated_at = datetime.now(timezone.utc)
+            db.add(row)
+        db.commit()
+    finally:
+        db.close()
     return list_rules()
 
 
@@ -226,42 +254,66 @@ def is_trusted_sender(email: Email) -> bool:
     return False
 
 
-def _load_rules() -> list[dict[str, Any]]:
+def _migrate_legacy_rules_if_needed() -> None:
     if not RULES_FILE_PATH.exists():
-        return []
+        return
+    db = open_global_session()
     try:
+        existing_rule = db.execute(select(Rule.id).limit(1)).scalar_one_or_none()
+        if existing_rule is not None:
+            if not RULES_MIGRATED_FILE_PATH.exists():
+                RULES_FILE_PATH.rename(RULES_MIGRATED_FILE_PATH)
+            return
+
         raw = json.loads(RULES_FILE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            raw = []
+        now = datetime.now(timezone.utc)
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            db.add(
+                Rule(
+                    id=str(item.get("id") or uuid4()),
+                    name=str(item.get("name") or "Untitled rule"),
+                    enabled=bool(item.get("enabled", True)),
+                    priority=int(item.get("order", 0)),
+                    conditions_json=json.dumps(_sanitize_conditions(item.get("conditions")), ensure_ascii=False),
+                    actions_json=json.dumps(_sanitize_actions(item.get("actions")), ensure_ascii=False),
+                    created_at=_parse_iso(item.get("created_at")) or now,
+                    updated_at=_parse_iso(item.get("updated_at")) or now,
+                )
+            )
+        db.commit()
+        RULES_FILE_PATH.rename(RULES_MIGRATED_FILE_PATH)
     except (OSError, json.JSONDecodeError):
-        logger.warning("Could not load automation rules from %s", RULES_FILE_PATH)
-        return []
-    if not isinstance(raw, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        normalized.append(
-            {
-                "id": str(item.get("id") or uuid4()),
-                "name": str(item.get("name") or "Untitled rule"),
-                "enabled": bool(item.get("enabled", True)),
-                "order": int(item.get("order", 0)),
-                "conditions": _sanitize_conditions(item.get("conditions")),
-                "actions": _sanitize_actions(item.get("actions")),
-                "created_at": str(item.get("created_at") or datetime.now(timezone.utc).isoformat()),
-                "updated_at": str(item.get("updated_at") or datetime.now(timezone.utc).isoformat()),
-            }
-        )
-    return normalized
+        logger.warning("Could not migrate automation rules from %s", RULES_FILE_PATH, exc_info=True)
+    finally:
+        db.close()
 
 
-def _save_rules(rules: list[dict[str, Any]]) -> None:
-    RULES_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    RULES_FILE_PATH.write_text(json.dumps(list_rules_payload(rules), ensure_ascii=False, indent=2), encoding="utf-8")
+def _rule_to_dict(rule: Rule) -> dict[str, Any]:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "enabled": bool(rule.enabled),
+        "order": int(rule.priority),
+        "conditions": _loads_json_object(rule.conditions_json),
+        "actions": _loads_json_object(rule.actions_json),
+        "created_at": rule.created_at.isoformat() if rule.created_at else "",
+        "updated_at": rule.updated_at.isoformat() if rule.updated_at else "",
+    }
 
 
-def list_rules_payload(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(rules, key=lambda item: (int(item.get("order", 0)), str(item.get("created_at", ""))))
+def _loads_json_object(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        logger.warning("Rule payload is not valid JSON", exc_info=True)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _sanitize_conditions(raw_conditions: Any) -> dict[str, Any]:
@@ -377,3 +429,17 @@ def _log_rule_applied(
             ),
         )
     )
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

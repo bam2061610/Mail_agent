@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -25,8 +26,10 @@ from app.services.mailbox_service import (
     update_mailbox,
 )
 from app.services.permission_service import require_permission
+from app.services.smtp_sender import test_smtp_connection
 
 router = APIRouter(prefix="/api", tags=["settings"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/settings", response_model=SettingsResponse)
@@ -100,6 +103,7 @@ def test_mailbox_connection(
         if status != "OK":
             raise RuntimeError("INBOX select failed")
         ensure_folders(runtime_mailbox)
+        test_smtp_connection(runtime_mailbox)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Connection test failed: {exc}") from exc
     finally:
@@ -107,11 +111,11 @@ def test_mailbox_connection(
             try:
                 connection.close()
             except Exception:  # noqa: BLE001
-                pass
+                logger.warning("Mailbox IMAP close failed during connection test", exc_info=True)
             try:
                 connection.logout()
             except Exception:  # noqa: BLE001
-                pass
+                logger.warning("Mailbox IMAP logout failed during connection test", exc_info=True)
     return OperationStatusResponse()
 
 

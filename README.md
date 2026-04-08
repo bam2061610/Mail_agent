@@ -1,6 +1,6 @@
 # Orhun Mail Agent
 
-Minimal backend skeleton for the Orhun Mail Agent project. This step focuses on a clean FastAPI foundation with configuration, database models, and basic API routes.
+Mail Agent is a FastAPI + React application for triaging email, drafting replies, reviewing follow-ups, and running mailbox automation with a setup-first flow.
 
 ## Backend Setup
 
@@ -154,17 +154,16 @@ Open `http://localhost:5173`. The Vite dev server proxies `/api/*` to the backen
 
 The app now supports practical multi-user team access with role checks enforced on the backend.
 
-- Passwords are hashed with PBKDF2 (`sha256`) and never stored in plain text.
+- Passwords are hashed with `bcrypt`, and legacy PBKDF2 hashes are upgraded on successful login.
 - Login is token-based (`Authorization: Bearer <token>`).
 - Audit actions now include acting `user_id` in `action_log` for key operations.
 - Assignment is available for thread/email ownership (`assigned_to_user_id`, `assigned_by_user_id`, `assigned_at`).
 
-First admin bootstrap is now explicit instead of automatic by default.
+First-run setup is now browser-driven by default.
 
-- Set `BOOTSTRAP_DEFAULT_ADMIN=true` in `backend/.env` for the first run only.
-- Set `BOOTSTRAP_ADMIN_PASSWORD=<your-password>` to choose the initial admin password.
-- If `BOOTSTRAP_ADMIN_PASSWORD` is left blank, the backend generates a random password and prints it once in the startup logs.
-- After the first admin is created, set `BOOTSTRAP_DEFAULT_ADMIN=false` again.
+- Keep the runtime `.env` minimal: `SECRET_KEY`, `DATABASE_URL`, and `PORT`.
+- Open the app and complete the setup wizard to create the first admin, test AI access, and save the first mailbox.
+- `POST /api/setup/complete` is permanently disabled after setup finishes.
 
 Roles:
 
@@ -247,7 +246,7 @@ Outgoing conversations can now be tracked in a waiting state:
 
 - Sending a reply through the app automatically starts waiting-for-reply tracking for that thread
 - You can also start or close waiting manually from the API or dashboard
-- Waiting threads automatically move to overdue when they exceed `FOLLOWUP_OVERDUE_DAYS`
+- Waiting threads automatically move to overdue when they exceed the configured `followup_overdue_days` runtime setting
 - If an inbound reply arrives in a tracked thread, waiting is closed automatically during inbox import
 - Overdue threads can generate a suggested follow-up draft through the existing AI integration
 
@@ -302,7 +301,7 @@ curl -X POST http://127.0.0.1:8000/api/scan
 
 ## Automatic Scheduler
 
-On FastAPI startup, APScheduler now starts a background job that runs inbox scan plus pending AI analysis every `SCAN_INTERVAL_MINUTES`.
+On FastAPI startup, APScheduler now starts a background job that runs inbox scan plus pending AI analysis using the database-backed `scheduler_interval_minutes` setting.
 
 - The scheduler reuses the existing scan/analyze services.
 - Overlapping runs are prevented with `max_instances=1`.
@@ -313,7 +312,7 @@ On FastAPI startup, APScheduler now starts a background job that runs inbox scan
 
 The product now supports lightweight explicit rules on top of AI analysis:
 
-- Rules are stored in `backend/data/rules.json`
+- Rules are stored in the database and legacy `rules.json` data is imported once on first use
 - Matching is deterministic and ordered by `order`
 - Supported match fields include `sender_email`, `sender_domain`, `subject_contains`, `has_auto_reply_headers`, `category`, `priority`, and `direction`
 - Supported actions include `set_priority`, `set_category`, `mark_spam`, `archive`, `trust_sender`, `never_spam`, and `move_to_focus`
@@ -347,7 +346,7 @@ The product now supports practical multilingual drafting for daily business comm
 - incoming email language is detected heuristically and stored on the email record
 - supported languages are `ru`, `en`, and `tr`
 - reply generation defaults to the detected source language unless the user overrides it
-- reusable templates are stored in `backend/data/templates.json`
+- reusable templates are stored in the database and legacy `templates.json` data is imported once on first use
 - AI can personalize a selected template to the current thread while preserving the chosen language
 
 Quick rewrite actions are also supported:
@@ -385,7 +384,7 @@ This step adds a practical situational-awareness layer:
 
 Catch-up behavior:
 
-- User activity state is stored in `backend/data/digest_state.json`
+- User activity state is stored in runtime settings under per-user digest keys
 - `CATCHUP_ABSENCE_HOURS` (default `8`) defines when catch-up mode is shown
 - Digest includes:
   - important new inbound threads
@@ -422,7 +421,7 @@ curl -X POST http://127.0.0.1:8000/api/digest/mark-seen
 
 The app now supports multiple mailbox accounts and attachment metadata/storage.
 
-- Mailboxes are stored in `backend/data/mailboxes.json`
+- Mailboxes are stored in the `mailbox_accounts` database table
 - Scanner loops through all enabled mailboxes via `scan_all_mailboxes(...)`
 - Every imported email is linked to `mailbox_id`, `mailbox_name`, `mailbox_address`
 - Replies are sent through the mailbox linked to the email (or the default outgoing mailbox)
