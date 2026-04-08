@@ -329,7 +329,12 @@ def _parse_list_entry(entry: Any) -> tuple[str | None, str | None] | None:
     if not decoded:
         return None
 
-    match = re.match(r'^\* LIST \((?P<flags>.*?)\)\s+(?P<delimiter>NIL|"(?:[^"\\]|\\.)*"|[^ ]+)\s+(?P<name>.+)$', decoded)
+    # imaplib strips "* LIST " prefix before returning data, but some
+    # server responses or imaplib versions may include it — handle both.
+    match = re.match(
+        r'^(?:\* LIST\s+)?\((?P<flags>.*?)\)\s+(?P<delimiter>NIL|"(?:[^"\\]|\\.)*"|[^ ]+)\s+(?P<name>.+)$',
+        decoded,
+    )
     if not match:
         return None
 
@@ -357,7 +362,9 @@ def _ensure_folder_exists(connection: Any, available_lookup: dict[str, str], fol
     if not callable(create):
         logger.warning("IMAP connection does not support CREATE; skipping folder %s", folder_name)
         return None
-    status, _ = create(folder_name)
+    # Quote folder names containing spaces (IMAP requires it)
+    folder_arg = f'"{folder_name}"' if " " in folder_name else folder_name
+    status, _ = create(folder_arg)
     if not _is_ok(status):
         logger.warning("Unable to create IMAP folder %s; folder actions will be skipped", folder_name)
         return None
