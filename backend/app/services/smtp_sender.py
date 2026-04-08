@@ -119,6 +119,8 @@ def send_email(
 
 def test_smtp_connection(config) -> None:
     context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
     smtp_username = getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None)
     if not getattr(config, "smtp_host", None) or not smtp_username or not getattr(config, "smtp_password", None):
         raise SmtpError("SMTP credentials are not fully configured")
@@ -189,6 +191,8 @@ def _send_message(
 )
 def _deliver_message(message: EmailMessage, recipients: list[str], config) -> None:
     context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
     smtp_username = getattr(config, "smtp_username", None) or getattr(config, "smtp_user", None)
     if not getattr(config, "smtp_host", None) or not smtp_username or not getattr(config, "smtp_password", None):
         raise SmtpError("SMTP credentials are not fully configured")
