@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import get_safe_settings_view, save_runtime_settings
+from app.core.api_errors import api_error
 from app.db import open_account_session, open_global_session
 from app.models.action_log import ActionLog
 from app.models.user import User
@@ -70,7 +71,12 @@ def update_mailbox_route(
 ) -> MailboxResponse:
     payload = update_mailbox(mailbox_id, request.model_dump(exclude_none=True))
     if payload is None:
-        raise HTTPException(status_code=404, detail="Mailbox not found")
+        raise api_error(
+            "mailbox_context_missing",
+            "Mailbox not found",
+            status_code=404,
+            details={"mailbox_id": mailbox_id},
+        )
     _log_mailbox_action("mailbox_updated", payload, current_user)
     return MailboxResponse(**payload)
 
@@ -82,7 +88,12 @@ def delete_mailbox_route(
 ) -> OperationStatusResponse:
     deleted = delete_mailbox(mailbox_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Mailbox not found")
+        raise api_error(
+            "mailbox_context_missing",
+            "Mailbox not found",
+            status_code=404,
+            details={"mailbox_id": mailbox_id},
+        )
     _log_mailbox_action("mailbox_deleted", {"mailbox_id": mailbox_id}, current_user)
     return OperationStatusResponse()
 
@@ -94,7 +105,12 @@ def test_mailbox_connection(
 ) -> OperationStatusResponse:
     mailbox = get_mailbox(mailbox_id, redact_secrets=False)
     if mailbox is None:
-        raise HTTPException(status_code=404, detail="Mailbox not found")
+        raise api_error(
+            "mailbox_context_missing",
+            "Mailbox not found",
+            status_code=404,
+            details={"mailbox_id": mailbox_id},
+        )
     runtime_mailbox = to_runtime_mailbox(mailbox)
     connection = None
     try:
@@ -105,7 +121,12 @@ def test_mailbox_connection(
         ensure_folders(runtime_mailbox)
         test_smtp_connection(runtime_mailbox)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Connection test failed: {exc}") from exc
+        raise api_error(
+            "imap_folder_resolution_failed",
+            "Connection test failed",
+            status_code=400,
+            details={"mailbox_id": mailbox_id, "error": str(exc)},
+        ) from exc
     finally:
         if connection is not None:
             try:
@@ -126,7 +147,12 @@ def scan_single_mailbox(
 ) -> OperationStatusResponse:
     mailbox = get_mailbox(mailbox_id, redact_secrets=False)
     if mailbox is None:
-        raise HTTPException(status_code=404, detail="Mailbox not found")
+        raise api_error(
+            "mailbox_context_missing",
+            "Mailbox not found",
+            status_code=404,
+            details={"mailbox_id": mailbox_id},
+        )
     db = open_account_session(mailbox_id)
     try:
         result = scan_inbox(db, to_runtime_mailbox(mailbox))

@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.api_errors import api_error
 from app.db import get_global_db
 from app.models.action_log import ActionLog
 from app.models.user import User
@@ -45,7 +46,7 @@ def create_user_route(
     try:
         user = create_user(db, **request.model_dump())
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise api_error("validation_error", str(exc), status_code=400) from exc
 
     _log_user_action(
         db,
@@ -67,7 +68,7 @@ def update_user_route(
     try:
         updated = update_user(db, user, request.model_dump(exclude_none=True))
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise api_error("validation_error", str(exc), status_code=400) from exc
 
     _log_user_action(
         db,
@@ -86,7 +87,7 @@ def disable_user_route(
 ) -> User:
     user = _load_user_or_404(db, user_id)
     if user.id == current_user.id:
-        raise HTTPException(status_code=400, detail="You cannot disable your own account")
+        raise api_error("validation_error", "You cannot disable your own account", status_code=400)
 
     updated = disable_user(db, user)
     _log_user_action(db, current_user, "user_disabled", {"user_id": updated.id, "email": updated.email})
@@ -104,7 +105,7 @@ def reset_password_route(
     try:
         reset_user_password(db, user, request.new_password)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise api_error("validation_error", str(exc), status_code=400) from exc
 
     _log_user_action(db, current_user, "user_password_reset", {"user_id": user.id, "email": user.email})
     return OperationStatusResponse()

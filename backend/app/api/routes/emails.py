@@ -2,13 +2,14 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.config import get_effective_settings
 from app.db import get_db
+from app.core.api_errors import api_error
 from app.exceptions import SmtpError
 from app.models.action_log import ActionLog
 from app.models.attachment import Attachment
@@ -50,9 +51,9 @@ from app.services.spam_service import annotate_spam_review_metadata, confirm_ema
 from app.services.mail.smtp_send import send_reply
 from app.services.language_service import normalize_language
 from app.services.imap_folder_service import move_email as move_email_on_server, move_to_inbox as move_email_to_inbox
+from app.services.imap_scanner import extract_raw_message_id
 from app.services.mailbox_service import (
     SENT_DIRECTION_VALUES,
-    get_default_runtime_mailbox_from_settings,
     get_mailbox,
     get_outgoing_mailbox_for_email,
     get_thread_lookup_keys,
@@ -73,54 +74,163 @@ router = APIRouter(prefix="/api/emails", tags=["emails"])
 ALLOWED_STATUSES = {"new", "read", "archived", "spam", "replied", "reply_later", "processed"}
 INBOUND_DIRECTION_VALUES = ("inbound", "incoming", "received")
 logger = logging.getLogger(__name__)
-STATUS_LOCAL_FOLDERS = {
-    "archived": "Archive",
-    "spam": "Spam",
-    "processed": "Processed",
-    "reply_later": "Reply Later",
-    "new": "INBOX",
-}
 
 
-def _resolve_runtime_mailbox_for_email(email: Email):
-    if getattr(email, "mailbox_id", None):
-        mailbox = get_mailbox(str(email.mailbox_id), redact_secrets=False)
-        if mailbox is not None:
-            return to_runtime_mailbox(mailbox)
-    return get_default_runtime_mailbox_from_settings()
-
-
-def _move_email_on_server(mailbox_config, email: Email, target_kind: str, source_folder: str | None) -> None:
-    if mailbox_config is None:
-        logger.warning("Mailbox configuration missing; skipping IMAP move for email_id=%s", email.id)
-        return
-
-    try:
-        if target_kind == "inbox":
-            result = move_email_to_inbox(
-                mailbox_config,
-                email.imap_uid,
-                source_folder=source_folder,
-                message_id=email.message_id,
-            )
-        else:
-            result = move_email_on_server(
-                mailbox_config,
-                email.imap_uid,
-                target_kind,
-                source_folder=source_folder,
-                message_id=email.message_id,
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "IMAP move failed for email_id=%s target=%s; continuing with DB-only update: %s",
-            email.id,
-            target_kind,
-            exc,
+def _resolve_mailbox_context_for_email(request: Request, email: Email):
+    requested_mailbox_id = getattr(request.state, "request_mailbox_id", None)
+    stored_mailbox_id = getattr(email, "mailbox_id", None)
+    if not stored_mailbox_id:
+        raise api_error(
+            "mailbox_context_missing",
+            "Mailbox context is missing for this email",
+            status_code=409,
+            details={"email_id": email.id},
         )
-        return
+    if requested_mailbox_id and requested_mailbox_id != stored_mailbox_id:
+        raise api_error(
+            "mailbox_context_mismatch",
+            "Mailbox context does not match the requested email",
+            status_code=409,
+            details={
+                "email_id": email.id,
+                "requested_mailbox_id": requested_mailbox_id,
+                "email_mailbox_id": stored_mailbox_id,
+            },
+        )
+    mailbox = get_mailbox(str(stored_mailbox_id), redact_secrets=False)
+    if mailbox is None:
+        raise api_error(
+            "mailbox_context_mismatch",
+            "Mailbox configuration for this email is unavailable",
+            status_code=409,
+            details={"email_id": email.id, "mailbox_id": stored_mailbox_id},
+        )
+    runtime_mailbox = to_runtime_mailbox(mailbox)
+    runtime_mailbox_id = getattr(runtime_mailbox, "id", None)
+    if runtime_mailbox_id and str(runtime_mailbox_id) != str(stored_mailbox_id):
+        raise api_error(
+            "mailbox_context_mismatch",
+            "Resolved mailbox configuration does not match the requested email",
+            status_code=409,
+            details={
+                "email_id": email.id,
+                "email_mailbox_id": stored_mailbox_id,
+                "runtime_mailbox_id": runtime_mailbox_id,
+            },
+        )
+    return runtime_mailbox
 
+
+def _mailbox_debug_label(mailbox_config) -> str | None:
+    if mailbox_config is None:
+        return None
+    return (
+        getattr(mailbox_config, "name", None)
+        or getattr(mailbox_config, "email_address", None)
+        or getattr(mailbox_config, "id", None)
+    )
+
+
+def _mailbox_debug_email(mailbox_config) -> str | None:
+    if mailbox_config is None:
+        return None
+    return getattr(mailbox_config, "email_address", None) or getattr(mailbox_config, "imap_username", None)
+
+
+def _log_imap_move_request(
+    *,
+    email: Email,
+    mailbox_config,
+    requested_status: str,
+    source_folder_hint: str | None,
+    target_kind: str,
+) -> None:
+    logger.info(
+        "IMAP status move request email_id=%s mailbox_id=%s mailbox_name=%s mailbox_email=%s requested_status=%s source_folder_hint=%s stored_uid=%s raw_message_id=%s target_kind=%s",
+        email.id,
+        getattr(mailbox_config, "id", None),
+        _mailbox_debug_label(mailbox_config),
+        _mailbox_debug_email(mailbox_config),
+        requested_status,
+        source_folder_hint,
+        email.imap_uid,
+        extract_raw_message_id(email.message_id),
+        target_kind,
+    )
+
+
+def _log_imap_move_result(
+    *,
+    email: Email,
+    mailbox_config,
+    requested_status: str,
+    source_folder_hint: str | None,
+    result,
+) -> None:
+    logger.info(
+        "IMAP status move result email_id=%s mailbox_id=%s mailbox_name=%s mailbox_email=%s requested_status=%s source_folder_hint=%s resolved_source_folder=%s resolved_target_folder=%s stored_uid=%s source_uid=%s target_uid=%s move_method=%s result_status=%s raw_message_id=%s",
+        email.id,
+        getattr(mailbox_config, "id", None),
+        _mailbox_debug_label(mailbox_config),
+        _mailbox_debug_email(mailbox_config),
+        requested_status,
+        source_folder_hint,
+        getattr(result, "source_folder", None),
+        getattr(result, "target_folder", None),
+        email.imap_uid,
+        getattr(result, "source_uid", None),
+        getattr(result, "target_uid", None),
+        "MOVE" if getattr(result, "used_move_command", False) else "COPY+DELETE",
+        getattr(result, "status", None),
+        extract_raw_message_id(email.message_id),
+    )
+
+
+def _move_email_on_server(
+    mailbox_config,
+    email: Email,
+    target_kind: str,
+    source_folder: str | None,
+    *,
+    requested_status: str | None = None,
+):
+    if mailbox_config is None:
+        raise RuntimeError("Mailbox configuration missing for IMAP move")
+
+    request_status = requested_status or target_kind
+    _log_imap_move_request(
+        email=email,
+        mailbox_config=mailbox_config,
+        requested_status=request_status,
+        source_folder_hint=source_folder,
+        target_kind=target_kind,
+    )
+
+    if target_kind == "inbox":
+        result = move_email_to_inbox(
+            mailbox_config,
+            email.imap_uid,
+            source_folder=source_folder,
+            message_id=email.message_id,
+        )
+    else:
+        result = move_email_on_server(
+            mailbox_config,
+            email.imap_uid,
+            target_kind,
+            source_folder=source_folder,
+            message_id=email.message_id,
+        )
+
+    _log_imap_move_result(
+        email=email,
+        mailbox_config=mailbox_config,
+        requested_status=request_status,
+        source_folder_hint=source_folder,
+        result=result,
+    )
     email.imap_uid = result.target_uid or result.source_uid or email.imap_uid
+    return result
 
 
 @router.get("", response_model=list[EmailListItem])
@@ -199,12 +309,14 @@ def list_emails(
 @router.get("/{email_id}", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def get_email(
     email_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("read")),
 ) -> Email:
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
         raise HTTPException(status_code=404, detail="Email not found")
+    _resolve_mailbox_context_for_email(request, email)
     annotate_spam_review_metadata(db, [email])
     _attach_attachment_counts(db, [email])
     return email
@@ -512,32 +624,48 @@ def mark_single_sent_review_helpful(
 @router.post("/{email_id}/status", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def update_email_status(
     email_id: int,
-    request: EmailStatusUpdateRequest,
+    payload: EmailStatusUpdateRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("update_status")),
 ) -> Email:
-    if request.status not in ALLOWED_STATUSES:
-        raise HTTPException(status_code=400, detail="Unsupported status")
+    if payload.status not in ALLOWED_STATUSES:
+        raise api_error("validation_error", "Unsupported status", status_code=400, details={"status": payload.status})
 
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
+        raise api_error("email_not_found", "Email not found", status_code=404, details={"email_id": email_id})
 
-    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    mailbox_config = _resolve_mailbox_context_for_email(http_request, email)
+
     previous_spam_state = email.is_spam
     previous_folder = email.folder
-    status = request.status
+    status = payload.status
+    move_result = None
+    target_kind = {
+        "spam": "spam",
+        "archived": "archive",
+        "processed": "processed",
+        "reply_later": "reply_later",
+        "new": "inbox",
+    }.get(status)
 
     try:
         if status == "spam":
+            move_result = _move_email_on_server(
+                mailbox_config,
+                email,
+                "spam",
+                previous_folder,
+                requested_status=status,
+            )
             email.status = "spam"
             email.is_spam = True
             email.spam_source = "user"
             email.spam_reason = "Moved to spam folder"
-            email.folder = STATUS_LOCAL_FOLDERS["spam"]
+            email.folder = move_result.target_folder
             email.requires_reply = False
             db.add(email)
-            _move_email_on_server(mailbox_config, email, "spam", previous_folder)
             db.add(
                 ActionLog(
                     user_id=current_user.id,
@@ -548,40 +676,96 @@ def update_email_status(
                 )
             )
         elif status == "archived":
+            move_result = _move_email_on_server(
+                mailbox_config,
+                email,
+                "archive",
+                previous_folder,
+                requested_status=status,
+            )
             email.status = "archived"
-            email.folder = STATUS_LOCAL_FOLDERS["archived"]
+            email.folder = move_result.target_folder
             email.requires_reply = False
             db.add(email)
-            _move_email_on_server(mailbox_config, email, "archive", previous_folder)
         elif status == "processed":
+            move_result = _move_email_on_server(
+                mailbox_config,
+                email,
+                "processed",
+                previous_folder,
+                requested_status=status,
+            )
             email.status = "processed"
-            email.folder = STATUS_LOCAL_FOLDERS["processed"]
+            email.folder = move_result.target_folder
             email.requires_reply = False
             db.add(email)
-            _move_email_on_server(mailbox_config, email, "processed", previous_folder)
         elif status == "reply_later":
+            move_result = _move_email_on_server(
+                mailbox_config,
+                email,
+                "reply_later",
+                previous_folder,
+                requested_status=status,
+            )
             email.status = "reply_later"
-            email.folder = STATUS_LOCAL_FOLDERS["reply_later"]
+            email.folder = move_result.target_folder
             db.add(email)
-            _move_email_on_server(mailbox_config, email, "reply_later", previous_folder)
         elif status == "new":
+            move_result = _move_email_on_server(
+                mailbox_config,
+                email,
+                "inbox",
+                previous_folder,
+                requested_status=status,
+            )
             email.status = "new"
-            email.folder = STATUS_LOCAL_FOLDERS["new"]
+            email.folder = move_result.target_folder
             if previous_spam_state:
                 email.is_spam = False
+                email.spam_source = None
+                email.spam_reason = None
             db.add(email)
-            _move_email_on_server(mailbox_config, email, "inbox", previous_folder)
         else:
             email.status = status
             db.add(email)
         if previous_spam_state and status != "spam":
             email.is_spam = False
+            email.spam_source = None
+            email.spam_reason = None
     except HTTPException:
         db.rollback()
         raise
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Unexpected status update failure: {exc}") from exc
+        logger.exception(
+            "IMAP status update failed email_id=%s mailbox_id=%s mailbox_name=%s mailbox_email=%s requested_status=%s source_folder=%s target_kind=%s stored_uid=%s raw_message_id=%s",
+            email.id,
+            getattr(email, "mailbox_id", None),
+            _mailbox_debug_label(mailbox_config),
+            _mailbox_debug_email(mailbox_config),
+            status,
+            previous_folder,
+            target_kind,
+            email.imap_uid,
+            extract_raw_message_id(email.message_id),
+        )
+        raise api_error(
+            "imap_move_failed",
+            "Failed to move email on IMAP server",
+            status_code=502,
+            details={
+                "email_id": email.id,
+                "mailbox_id": getattr(mailbox_config, "id", None),
+                "mailbox_name": _mailbox_debug_label(mailbox_config),
+                "mailbox_email": _mailbox_debug_email(mailbox_config),
+                "requested_status": status,
+                "source_folder": previous_folder,
+                "target_kind": target_kind,
+                "stored_uid": email.imap_uid,
+                "message_id": email.message_id,
+                "raw_message_id": extract_raw_message_id(email.message_id),
+            },
+        ) from exc
 
     db.add(
         ActionLog(
@@ -616,27 +800,59 @@ def update_email_status(
 @router.post("/{email_id}/restore", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def restore_spam_message(
     email_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("spam_review")),
 ) -> Email:
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
+        raise api_error("email_not_found", "Email not found", status_code=404, details={"email_id": email_id})
 
-    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    mailbox_config = _resolve_mailbox_context_for_email(request, email)
+
     previous_folder = email.folder
     try:
+        move_result = _move_email_on_server(
+            mailbox_config,
+            email,
+            "inbox",
+            previous_folder,
+            requested_status="new",
+        )
         restore_email_from_spam(db, email, actor=current_user.email)
-        email.folder = STATUS_LOCAL_FOLDERS["new"]
+        email.folder = move_result.target_folder
         db.add(email)
-        _move_email_on_server(mailbox_config, email, "inbox", previous_folder)
         db.commit()
     except HTTPException:
         db.rollback()
         raise
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Unable to restore message: {exc}") from exc
+        logger.exception(
+            "Spam restore failed email_id=%s mailbox_id=%s source_folder=%s stored_uid=%s message_id=%s",
+            email.id,
+            getattr(email, "mailbox_id", None),
+            previous_folder,
+            email.imap_uid,
+            extract_raw_message_id(email.message_id),
+        )
+        raise api_error(
+            "imap_move_failed",
+            "Failed to move email on IMAP server",
+            status_code=502,
+            details={
+                "email_id": email.id,
+                "mailbox_id": getattr(mailbox_config, "id", None),
+                "mailbox_name": _mailbox_debug_label(mailbox_config),
+                "mailbox_email": _mailbox_debug_email(mailbox_config),
+                "requested_status": "new",
+                "source_folder": previous_folder,
+                "target_kind": "inbox",
+                "stored_uid": email.imap_uid,
+                "message_id": email.message_id,
+                "raw_message_id": extract_raw_message_id(email.message_id),
+            },
+        ) from exc
 
     rebuild_preference_profile(db)
     db.refresh(email)
@@ -648,28 +864,60 @@ def restore_spam_message(
 @router.post("/{email_id}/confirm-spam", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def confirm_spam_message(
     email_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("spam_review")),
 ) -> Email:
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
+        raise api_error("email_not_found", "Email not found", status_code=404, details={"email_id": email_id})
 
-    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    mailbox_config = _resolve_mailbox_context_for_email(request, email)
+
     previous_folder = email.folder
     try:
+        move_result = _move_email_on_server(
+            mailbox_config,
+            email,
+            "spam",
+            previous_folder,
+            requested_status="spam",
+        )
         confirm_email_spam(db, email, actor=current_user.email)
-        email.folder = STATUS_LOCAL_FOLDERS["spam"]
+        email.folder = move_result.target_folder
         email.requires_reply = False
         db.add(email)
-        _move_email_on_server(mailbox_config, email, "spam", previous_folder)
         db.commit()
     except HTTPException:
         db.rollback()
         raise
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Unable to confirm spam: {exc}") from exc
+        logger.exception(
+            "Spam confirm failed email_id=%s mailbox_id=%s source_folder=%s stored_uid=%s message_id=%s",
+            email.id,
+            getattr(email, "mailbox_id", None),
+            previous_folder,
+            email.imap_uid,
+            extract_raw_message_id(email.message_id),
+        )
+        raise api_error(
+            "imap_move_failed",
+            "Failed to move email on IMAP server",
+            status_code=502,
+            details={
+                "email_id": email.id,
+                "mailbox_id": getattr(mailbox_config, "id", None),
+                "mailbox_name": _mailbox_debug_label(mailbox_config),
+                "mailbox_email": _mailbox_debug_email(mailbox_config),
+                "requested_status": "spam",
+                "source_folder": previous_folder,
+                "target_kind": "spam",
+                "stored_uid": email.imap_uid,
+                "message_id": email.message_id,
+                "raw_message_id": extract_raw_message_id(email.message_id),
+            },
+        ) from exc
 
     rebuild_preference_profile(db)
     db.refresh(email)
@@ -681,22 +929,30 @@ def confirm_spam_message(
 @router.post("/{email_id}/reply-later", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def move_email_reply_later(
     email_id: int,
+    http_request: Request,
     request: EmailReplyLaterRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("update_status")),
 ) -> Email:
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
+        raise api_error("email_not_found", "Email not found", status_code=404, details={"email_id": email_id})
 
-    mailbox_config = _resolve_runtime_mailbox_for_email(email)
+    mailbox_config = _resolve_mailbox_context_for_email(http_request, email)
+
     previous_folder = email.folder
-    email.status = "reply_later"
-    email.folder = STATUS_LOCAL_FOLDERS["reply_later"]
-    db.add(email)
 
     try:
-        _move_email_on_server(mailbox_config, email, "reply_later", previous_folder)
+        move_result = _move_email_on_server(
+            mailbox_config,
+            email,
+            "reply_later",
+            previous_folder,
+            requested_status="reply_later",
+        )
+        email.status = "reply_later"
+        email.folder = move_result.target_folder
+        db.add(email)
         db.add(
             ActionLog(
                 user_id=current_user.id,
@@ -719,7 +975,31 @@ def move_email_reply_later(
         raise
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Unable to move message later: {exc}") from exc
+        logger.exception(
+            "Reply-later move failed email_id=%s mailbox_id=%s source_folder=%s stored_uid=%s message_id=%s",
+            email.id,
+            getattr(email, "mailbox_id", None),
+            previous_folder,
+            email.imap_uid,
+            extract_raw_message_id(email.message_id),
+        )
+        raise api_error(
+            "imap_move_failed",
+            "Failed to move email on IMAP server",
+            status_code=502,
+            details={
+                "email_id": email.id,
+                "mailbox_id": getattr(mailbox_config, "id", None),
+                "mailbox_name": _mailbox_debug_label(mailbox_config),
+                "mailbox_email": _mailbox_debug_email(mailbox_config),
+                "requested_status": "reply_later",
+                "source_folder": previous_folder,
+                "target_kind": "reply_later",
+                "stored_uid": email.imap_uid,
+                "message_id": email.message_id,
+                "raw_message_id": extract_raw_message_id(email.message_id),
+            },
+        ) from exc
 
     db.refresh(email)
     _attach_attachment_counts(db, [email])
@@ -734,7 +1014,7 @@ def get_email_attachments(
 ) -> list[Attachment]:
     email = db.query(Email).filter(Email.id == email_id).first()
     if email is None:
-        raise HTTPException(status_code=404, detail="Email not found")
+        raise api_error("email_not_found", "Email not found", status_code=404, details={"email_id": email_id})
     return list_email_attachments(db, email_id)
 
 

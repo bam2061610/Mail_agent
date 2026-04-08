@@ -18,7 +18,9 @@ def test_auth_login_and_me(client, admin_user):
 def test_auth_me_rejects_invalid_token_without_teardown_crash(client):
     response = client.get("/api/auth/me", headers={"Authorization": "Bearer expired-token"})
     assert response.status_code == 503
-    assert response.json()["error"] == "setup_required"
+    payload = response.json()
+    assert payload["error_code"] == "setup_required"
+    assert "setup" in payload["message"].lower()
 
 
 def test_mailbox_context_request_lifecycle_survives_context_reset(client, admin_user):
@@ -62,6 +64,7 @@ def test_auth_login_with_mailbox_header_works_in_real_runtime(db_session, admin_
 def test_auth_rejects_bad_credentials(client, admin_user):
     response = client.post("/api/auth/login", json={"email": admin_user.email, "password": "wrong"})
     assert response.status_code == 401
+    assert response.json()["error_code"] == "auth_required"
 
 
 def test_auth_logout_revokes_session_token(client, db_session, admin_user):

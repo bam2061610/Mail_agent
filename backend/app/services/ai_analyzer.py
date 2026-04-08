@@ -524,7 +524,6 @@ def _mark_email_as_auto_spam(email_record: Email, analysis_result: AnalysisResul
     email_record.status = "spam"
     email_record.spam_source = "ai_auto"
     email_record.spam_reason = analysis_result.spam_reason or f"AI classified as {analysis_result.category or analysis_result.priority}"
-    email_record.folder = "Spam"
 
     result = move_email_on_server(
         mailbox_config,
@@ -533,6 +532,7 @@ def _mark_email_as_auto_spam(email_record: Email, analysis_result: AnalysisResul
         source_folder=source_folder,
         message_id=email_record.message_id,
     )
+    email_record.folder = result.target_folder
     email_record.imap_uid = result.target_uid or result.source_uid or email_record.imap_uid
 
 

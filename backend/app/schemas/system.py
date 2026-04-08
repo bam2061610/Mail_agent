@@ -12,7 +12,9 @@ class HealthResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    detail: str
+    error_code: str
+    message: str
+    details: dict[str, Any] | None = None
 
 
 class StatsResponse(BaseModel):
@@ -166,6 +168,27 @@ class PreferenceProfileResponse(BaseModel):
 
 class OperationStatusResponse(BaseModel):
     status: str = "ok"
+
+
+class SystemStatusResponse(BaseModel):
+    setup_completed: bool
+    startup_completed: bool
+    data_dir_exists: bool
+    data_dir_writable: bool
+    data_dir_path: str
+    background_lock_present: bool
+    background_lock_owned_by_current_process: bool
+    background_lock_status: str
+    background_lock_stale: bool
+    background_lock_diagnostic: str | None = None
+    background_lock_owner_pid: int | None = None
+    background_lock_owner_hostname: str | None = None
+    background_lock_owner_instance_id: str | None = None
+    scheduler_running: bool
+    watchers_running: bool
+    static_frontend_available: bool
+    diagnostics_timestamp: str
+    diagnostics_available: bool = True
 
 
 class AutomationRule(BaseModel):

@@ -31,3 +31,12 @@ def test_settings_get_and_update_summary_language(client, admin_auth_headers):
     assert refetched.json()["summary_language"] == "tr"
     assert refetched.json()["scan_since_date"] == "2026-04-01T00:00:00Z"
     assert refetched.json()["auto_spam_enabled"] is False
+
+
+def test_mailbox_connection_missing_returns_structured_error(client, admin_auth_headers):
+    response = client.post("/api/mailboxes/missing-mailbox/test-connection", headers=admin_auth_headers)
+
+    assert response.status_code == 404
+    payload = response.json()
+    assert payload["error_code"] == "mailbox_context_missing"
+    assert payload["details"]["mailbox_id"] == "missing-mailbox"

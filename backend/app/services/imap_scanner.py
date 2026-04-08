@@ -710,6 +710,21 @@ def _normalize_message_identifier(value: str | None) -> str | None:
     return normalized
 
 
+def extract_raw_message_id(message_id: str | None) -> str | None:
+    """Return the RFC Message-ID part from a mailbox-scoped stored id.
+
+    Scanner storage may append ``::mailbox_id`` for deduplication across mailboxes.
+    IMAP SEARCH must always use the raw RFC Message-ID from the original message.
+    """
+    normalized = _normalize_message_identifier(message_id)
+    if not normalized:
+        return None
+    if "::" not in normalized:
+        return normalized
+    raw_message_id, _mailbox_id = normalized.rsplit("::", 1)
+    return _normalize_message_identifier(raw_message_id) or raw_message_id
+
+
 def _ensure_message_id(
     source_message_id: str | None,
     subject: str | None,

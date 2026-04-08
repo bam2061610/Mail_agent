@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
-import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, getErrorMessage } from "./api";
+import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, getErrorMessage, isSetupRequiredError } from "./api";
 import { useAuth } from "./hooks/useAuth";
 import { LoginScreen } from "./components/LoginScreen";
 import { SetupWizard } from "./components/SetupWizard";
@@ -125,6 +125,11 @@ export function App() {
       })
       .catch((error) => {
         if (cancelled) return;
+        if (isSetupRequiredError(error)) {
+          setSetupState("required");
+          setSetupError("");
+          return;
+        }
         setSetupState("loading");
         setSetupError(getErrorMessage(error, "Could not check setup status."));
       });

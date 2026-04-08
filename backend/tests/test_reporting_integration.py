@@ -125,4 +125,6 @@ def test_send_report_email_returns_502_on_smtp_failure(client, admin_auth_header
         json={"report_type": "activity", "to": ["ops@example.com"]},
     )
     assert response.status_code == 502
-    assert "Could not send report email" in response.json().get("detail", "")
+    payload = response.json()
+    assert payload["error_code"] == "bad_gateway"
+    assert "Could not send report email" in payload["message"]

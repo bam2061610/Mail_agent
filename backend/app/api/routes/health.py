@@ -2,7 +2,8 @@ from fastapi import APIRouter, Request
 from sqlalchemy import text
 
 from app.db import open_global_session
-from app.schemas.system import HealthResponse
+from app.schemas.system import HealthResponse, SystemStatusResponse
+from app.services.diagnostics_service import collect_system_status
 from app.services.settings_service import is_setup_completed
 
 router = APIRouter(tags=["system"])
@@ -36,4 +37,17 @@ def get_health(request: Request) -> HealthResponse:
         setup_completed=setup_completed,
         db=db_state,
         scheduler=scheduler_state,
+    )
+
+
+@router.get("/api/system/status", response_model=SystemStatusResponse)
+def get_system_status(request: Request) -> SystemStatusResponse:
+    startup_state = getattr(request.app.state, "startup_state", {}) or {}
+    return SystemStatusResponse(
+        **collect_system_status(
+            setup_completed=bool(startup_state.get("setup_completed", False)),
+            startup_completed=bool(startup_state.get("startup_completed", False)),
+            scheduler_running=bool(getattr(request.app.state, "scheduler", None) and getattr(request.app.state.scheduler, "running", False)),
+            watchers_running=bool(getattr(request.app.state, "mail_watchers", None)),
+        )
     )

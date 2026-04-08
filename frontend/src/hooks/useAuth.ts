@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
-import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, ApiError, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, saveStoredAuthToken } from "../api";
+import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, isAuthError, isNetworkError, isSetupRequiredError, saveStoredAuthToken } from "../api";
 import { initialLoginForm, type AuthLoginResponse, type AuthMeResponse, type LoginFormState, type UserItem } from "../types";
 
 type UseAuthResult = {
@@ -48,10 +48,14 @@ export function useAuth(enabled = true): UseAuthResult {
       setAuthError("");
     } catch (error) {
       if (mutationVersion !== authMutationVersionRef.current) return;
-      if (error instanceof ApiError && error.status === 401) {
+      if (isAuthError(error)) {
         clearStoredAuthToken();
         setAuthToken("");
         setAuthError("Session expired. Please sign in again.");
+      } else if (isSetupRequiredError(error)) {
+        setAuthError(getErrorMessage(error, "Setup is required before sign-in."));
+      } else if (isNetworkError(error)) {
+        setAuthError(getErrorMessage(error, "Unable to verify your session. Please check the backend connection."));
       } else {
         setAuthError(getErrorMessage(error, "Unable to verify your session. Please sign in again."));
       }
@@ -84,7 +88,11 @@ export function useAuth(enabled = true): UseAuthResult {
       setAuthLoading(false);
       setAuthSuccess("Logged in.");
     } catch (error) {
-      setAuthError(getErrorMessage(error, "Login failed."));
+      if (isSetupRequiredError(error)) {
+        setAuthError(getErrorMessage(error, "Setup is required before sign-in."));
+      } else {
+        setAuthError(getErrorMessage(error, "Login failed."));
+      }
     } finally {
       setActionLoading(null);
     }

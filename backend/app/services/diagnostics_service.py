@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_effective_settings
 from app.db import list_account_database_ids, open_account_session
+from app.core.process_lock import inspect_process_lock
 from app.models.email import Email
 from app.services.mailbox_service import get_enabled_mailbox_configs, list_mailboxes
 
@@ -18,6 +20,7 @@ DATA_DIR = BACKEND_DIR / "data"
 ATTACHMENTS_DIR = DATA_DIR / "attachments"
 BACKUPS_DIR = DATA_DIR / "backups"
 OPS_STATUS_FILE_PATH = DATA_DIR / "ops_status.json"
+BACKGROUND_LOCK_PATH = DATA_DIR / "background-services.lock"
 
 
 def read_ops_status() -> dict[str, Any]:
@@ -394,6 +397,37 @@ def collect_admin_health(
     }
 
 
+def collect_system_status(
+    *,
+    setup_completed: bool,
+    startup_completed: bool,
+    scheduler_running: bool,
+    watchers_running: bool,
+) -> dict[str, Any]:
+    data_dir_exists, data_dir_writable = _check_data_dir_state(DATA_DIR)
+    lock_state = inspect_process_lock(BACKGROUND_LOCK_PATH)
+    return {
+        "setup_completed": setup_completed,
+        "startup_completed": startup_completed,
+        "data_dir_exists": data_dir_exists,
+        "data_dir_writable": data_dir_writable,
+        "data_dir_path": str(DATA_DIR),
+        "background_lock_present": BACKGROUND_LOCK_PATH.exists(),
+        "background_lock_owned_by_current_process": bool(lock_state.acquired and lock_state.owner_pid == os.getpid()),
+        "background_lock_status": lock_state.status,
+        "background_lock_stale": lock_state.stale,
+        "background_lock_diagnostic": lock_state.diagnostic,
+        "background_lock_owner_pid": lock_state.owner_pid,
+        "background_lock_owner_hostname": lock_state.owner_hostname,
+        "background_lock_owner_instance_id": lock_state.owner_instance_id,
+        "scheduler_running": scheduler_running,
+        "watchers_running": watchers_running,
+        "static_frontend_available": (BACKEND_DIR.parent / "frontend_dist").exists(),
+        "diagnostics_timestamp": _now_iso(),
+        "diagnostics_available": True,
+    }
+
+
 def _default_status() -> dict[str, Any]:
     return {
         "scheduler": {"running": False},
@@ -403,6 +437,20 @@ def _default_status() -> dict[str, Any]:
         "restore": {},
         "mailboxes": {},
     }
+
+
+def _check_data_dir_state(data_dir: Path) -> tuple[bool, bool]:
+    if not data_dir.exists():
+        return False, False
+    if not data_dir.is_dir():
+        return False, False
+    probe = data_dir / ".write-test"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True, True
+    except OSError:
+        return True, False
 
 
 def _collect_dir_usage(path: Path) -> dict[str, Any]:

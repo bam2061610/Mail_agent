@@ -27,6 +27,23 @@ def test_happy_path_core_flow(client, db_session, admin_auth_headers, monkeypatc
     import app.api.routes.actions as actions_route
     import app.api.routes.emails as emails_route
 
+    mailbox_config = SimpleNamespace(
+        id="mb-default",
+        name="Default",
+        email_address="ops@orhun.local",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="ops@orhun.local",
+        imap_password="secret",
+    )
+
+    monkeypatch.setattr(
+        emails_route,
+        "get_mailbox",
+        lambda mailbox_id, redact_secrets=False: mailbox_config if str(mailbox_id) == mailbox_config.id else None,
+    )
+    monkeypatch.setattr(emails_route, "to_runtime_mailbox", lambda mailbox: mailbox)
+
     def _fake_scan_all_mailboxes(db, _settings):
         email = Email(
             message_id="<smoke-1@test>",
