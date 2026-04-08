@@ -75,6 +75,17 @@ def move_email(
         state = _get_folder_state(connection, mailbox)
         resolved_source_folder = _resolve_folder_hint(state, source_folder or "INBOX")
         resolved_target_folder = _resolve_folder_hint(state, target_folder)
+
+        logger.info(
+            "IMAP move start: mailbox=%s uid=%r source=%r->%r target=%r->%r",
+            getattr(mailbox, "id", None),
+            imap_uid,
+            source_folder,
+            resolved_source_folder,
+            target_folder,
+            resolved_target_folder,
+        )
+
         if resolved_target_folder is None:
             raise RuntimeError("Target IMAP folder could not be resolved")
 
@@ -100,19 +111,61 @@ def move_email(
         if resolved_uid is None:
             raise RuntimeError("Message UID could not be determined for IMAP move")
 
+        logger.info("IMAP move: selecting source folder %r uid=%r", resolved_source_folder, resolved_uid)
         _select_folder(connection, resolved_source_folder, readonly=False)
-        used_move_command = _connection_supports_move(connection)
-        if used_move_command:
-            move_status, _ = _safe_uid_command(connection, "move", resolved_uid, resolved_target_folder)
-            if not _is_ok(move_status):
-                raise RuntimeError(f"IMAP MOVE failed for {resolved_source_folder} -> {resolved_target_folder}")
-        else:
-            copy_status, _ = _safe_uid_command(connection, "copy", resolved_uid, resolved_target_folder)
-            if not _is_ok(copy_status):
-                raise RuntimeError(f"Unable to copy message to {resolved_target_folder}")
-            _safe_uid_command(connection, "store", resolved_uid, "+FLAGS.SILENT", r"(\Deleted)")
-            _safe_expunge(connection)
 
+        used_move_command = _connection_supports_move(connection)
+        logger.info("IMAP move: server supports MOVE=%s copying to %r", used_move_command, resolved_target_folder)
+
+        def _try_move_or_copy(uid: str) -> bool:
+            if used_move_command:
+                status, _ = _safe_uid_command(connection, "move", uid, resolved_target_folder)
+                return _is_ok(status)
+            copy_status, _ = _safe_uid_command(connection, "copy", uid, resolved_target_folder)
+            if not _is_ok(copy_status):
+                return False
+            _safe_uid_command(connection, "store", uid, "+FLAGS.SILENT", r"(\Deleted)")
+            _safe_expunge(connection)
+            return True
+
+        success = _try_move_or_copy(resolved_uid)
+
+        if not success and message_id:
+            logger.warning(
+                "IMAP move failed with stored uid=%r; retrying with fresh UID search in %r",
+                resolved_uid,
+                resolved_source_folder,
+            )
+            fresh_uid = _find_message_uid(connection, resolved_source_folder, message_id)
+            if fresh_uid and fresh_uid != resolved_uid:
+                logger.info("IMAP move retry with fresh uid=%r", fresh_uid)
+                success = _try_move_or_copy(fresh_uid)
+                if success:
+                    resolved_uid = fresh_uid
+            elif fresh_uid is None:
+                # Message not in source folder — search all folders
+                logger.warning("Message not found in %r; searching other folders", resolved_source_folder)
+                for folder_path in [f for f in [state.archive_folder, state.spam_folder,
+                                                  state.processed_folder, state.reply_later_folder,
+                                                  "INBOX"] if f and f != resolved_source_folder]:
+                    try:
+                        alt_uid = _find_message_uid(connection, folder_path, message_id)
+                        if alt_uid:
+                            logger.info("Found message in %r uid=%r; re-selecting and retrying", folder_path, alt_uid)
+                            _select_folder(connection, folder_path, readonly=False)
+                            success = _try_move_or_copy(alt_uid)
+                            if success:
+                                resolved_uid = alt_uid
+                                break
+                    except Exception:  # noqa: BLE001
+                        continue
+
+        if not success:
+            raise RuntimeError(
+                f"IMAP move failed: could not move uid={resolved_uid} from {resolved_source_folder} to {resolved_target_folder}"
+            )
+
+        logger.info("IMAP move success: %r -> %r uid=%r", resolved_source_folder, resolved_target_folder, resolved_uid)
         target_uid = _find_message_uid(connection, resolved_target_folder, message_id) if message_id else None
         return ImapMoveResult(
             status="moved",
@@ -124,7 +177,7 @@ def move_email(
         )
     except Exception:
         logger.exception(
-            "Failed to move IMAP message mailbox=%s source=%s target=%s",
+            "Failed to move IMAP message mailbox=%s source=%r target=%r",
             getattr(mailbox, "id", None),
             source_folder,
             target_folder,
@@ -310,6 +363,13 @@ def _ensure_folder_exists(connection: Any, available_lookup: dict[str, str], fol
         return None
     available_lookup[folder_name.strip().lower()] = folder_name
     logger.info("Created IMAP folder: %s", folder_name)
+    # Subscribe so the folder is usable for COPY/MOVE on all servers
+    try:
+        subscribe = getattr(connection, "subscribe", None)
+        if callable(subscribe):
+            subscribe(folder_name)
+    except Exception:  # noqa: BLE001
+        pass
     return folder_name
 
 
