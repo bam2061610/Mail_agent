@@ -3,14 +3,17 @@ import { apiPost, getErrorMessage } from "../api";
 import {
   initialSetupAccountForm,
   initialSetupAiForm,
+  initialSetupLaunchForm,
   initialSetupMailboxForm,
   type SetupAccountFormState,
   type SetupAiFormState,
   type SetupCompletePayload,
+  type SetupLaunchFormState,
   type SetupMailboxFormState,
 } from "../types";
 import { SetupStepAccount } from "./setup/SetupStepAccount";
 import { SetupStepAI } from "./setup/SetupStepAI";
+import { SetupStepLaunch } from "./setup/SetupStepLaunch";
 import { SetupStepMailbox } from "./setup/SetupStepMailbox";
 
 interface SetupWizardProps {
@@ -26,6 +29,7 @@ export function SetupWizard({ onCompleted }: SetupWizardProps) {
   const [accountForm, setAccountForm] = useState<SetupAccountFormState>(initialSetupAccountForm);
   const [aiForm, setAiForm] = useState<SetupAiFormState>(initialSetupAiForm);
   const [mailboxForm, setMailboxForm] = useState<SetupMailboxFormState>(initialSetupMailboxForm);
+  const [launchForm, setLaunchForm] = useState<SetupLaunchFormState>(initialSetupLaunchForm);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [bannerError, setBannerError] = useState("");
   const [bannerSuccess, setBannerSuccess] = useState("");
@@ -36,8 +40,18 @@ export function SetupWizard({ onCompleted }: SetupWizardProps) {
       { label: "Admin", value: accountForm.email || "Not set" },
       { label: "AI model", value: aiForm.deepseek_model || "Not set" },
       { label: "Mailbox", value: mailboxForm.email_address || "Not set" },
+      { label: "Scan interval", value: `${launchForm.scheduler_interval_minutes || "5"} min` },
+      { label: "Follow-up overdue", value: `${launchForm.followup_overdue_days || "3"} days` },
+      { label: "Max emails per scan", value: launchForm.max_emails_per_scan || "200" },
     ],
-    [accountForm.email, aiForm.deepseek_model, mailboxForm.email_address]
+    [
+      accountForm.email,
+      aiForm.deepseek_model,
+      launchForm.followup_overdue_days,
+      launchForm.max_emails_per_scan,
+      launchForm.scheduler_interval_minutes,
+      mailboxForm.email_address,
+    ]
   );
 
   function validateAccount(): Record<string, string> {
@@ -73,8 +87,33 @@ export function SetupWizard({ onCompleted }: SetupWizardProps) {
     return errors;
   }
 
+  function validateLaunch(): Record<string, string> {
+    const errors: Record<string, string> = {};
+    const numericFields: Array<
+      "scheduler_interval_minutes" | "followup_overdue_days" | "max_emails_per_scan"
+    > = [
+      "scheduler_interval_minutes",
+      "followup_overdue_days",
+      "max_emails_per_scan",
+    ];
+    for (const field of numericFields) {
+      const value = launchForm[field];
+      if (typeof value !== "string" || !/^\d+$/.test(value.trim()) || Number(value) <= 0) {
+        errors[field] = "Enter a positive whole number.";
+      }
+    }
+    return errors;
+  }
+
   function validateCurrentStep(): boolean {
-    const errors = step === 0 ? validateAccount() : step === 1 ? validateAi() : step === 2 ? validateMailbox() : {};
+    const errors =
+      step === 0
+        ? validateAccount()
+        : step === 1
+          ? validateAi()
+          : step === 2
+            ? validateMailbox()
+            : validateLaunch();
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -99,10 +138,10 @@ export function SetupWizard({ onCompleted }: SetupWizardProps) {
         enabled: true,
         is_default_outgoing: true,
       },
-      scheduler_interval_minutes: 5,
-      followup_overdue_days: 3,
-      max_emails_per_scan: 200,
-      ai_analysis_enabled: true,
+      scheduler_interval_minutes: Number(launchForm.scheduler_interval_minutes || "5"),
+      followup_overdue_days: Number(launchForm.followup_overdue_days || "3"),
+      max_emails_per_scan: Number(launchForm.max_emails_per_scan || "200"),
+      ai_analysis_enabled: launchForm.ai_analysis_enabled,
     };
   }
 
@@ -146,10 +185,19 @@ export function SetupWizard({ onCompleted }: SetupWizardProps) {
     const accountErrors = validateAccount();
     const aiErrors = validateAi();
     const mailboxErrors = validateMailbox();
-    const errors = { ...accountErrors, ...aiErrors, ...mailboxErrors };
+    const launchErrors = validateLaunch();
+    const errors = { ...accountErrors, ...aiErrors, ...mailboxErrors, ...launchErrors };
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
-      setStep(Object.keys(accountErrors).length > 0 ? 0 : Object.keys(aiErrors).length > 0 ? 1 : 2);
+      setStep(
+        Object.keys(accountErrors).length > 0
+          ? 0
+          : Object.keys(aiErrors).length > 0
+            ? 1
+            : Object.keys(mailboxErrors).length > 0
+              ? 2
+              : 3
+      );
       return;
     }
     setBusyAction("submit");
@@ -222,20 +270,12 @@ export function SetupWizard({ onCompleted }: SetupWizardProps) {
           />
         ) : null}
         {step === 3 ? (
-          <div className="setup-confirm-grid">
-            {summaryItems.map((item) => (
-              <div key={item.label} className="setup-summary-card">
-                <span className="field-label">{item.label}</span>
-                <strong>{item.value}</strong>
-              </div>
-            ))}
-            <div className="setup-summary-card is-wide">
-              <span className="field-label">What happens next</span>
-              <p className="helper-text">
-                Mail Agent will create the first admin user, store your AI and mailbox settings in the database, and unlock the regular sign-in screen.
-              </p>
-            </div>
-          </div>
+          <SetupStepLaunch
+            form={launchForm}
+            errors={fieldErrors}
+            summaryItems={summaryItems}
+            onChange={setLaunchForm}
+          />
         ) : null}
 
         <div className="setup-actions">

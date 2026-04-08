@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import threading
+import time
+from collections.abc import Callable
 from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
@@ -15,6 +20,12 @@ from app.services.smtp_sender import test_smtp_connection
 from app.services.user_service import create_user, get_user_by_email
 
 logger = logging.getLogger(__name__)
+SETUP_VALIDATION_TTL_SECONDS = 15 * 60
+_validation_cache_lock = threading.Lock()
+_validated_setup_payloads: dict[str, dict[str, float]] = {
+    "ai": {},
+    "mailbox": {},
+}
 
 
 def test_ai_configuration(payload: SetupAiConfig) -> None:
@@ -34,6 +45,7 @@ def test_ai_configuration(payload: SetupAiConfig) -> None:
     except Exception as exc:  # noqa: BLE001
         logger.warning("AI setup test failed", exc_info=True)
         raise SetupError(f"AI configuration test failed: {exc}") from exc
+    _remember_successful_validation("ai", payload.model_dump())
 
 
 def test_mailbox_configuration(payload: SetupMailboxConfig) -> None:
@@ -78,6 +90,7 @@ def test_mailbox_configuration(payload: SetupMailboxConfig) -> None:
                 connection.logout()
             except Exception:
                 logger.warning("IMAP connection logout failed during setup", exc_info=True)
+    _remember_successful_validation("mailbox", payload.model_dump())
 
 
 def complete_setup(db: Session, payload: SetupCompleteRequest) -> None:
@@ -86,8 +99,12 @@ def complete_setup(db: Session, payload: SetupCompleteRequest) -> None:
     if get_user_by_email(db, payload.admin.email):
         raise SetupError("An admin user with this email already exists")
 
-    test_ai_configuration(payload.ai)
-    test_mailbox_configuration(payload.mailbox)
+    _validate_or_reuse_successful_check("ai", payload.ai.model_dump(), lambda: test_ai_configuration(payload.ai))
+    _validate_or_reuse_successful_check(
+        "mailbox",
+        payload.mailbox.model_dump(),
+        lambda: test_mailbox_configuration(payload.mailbox),
+    )
 
     save_runtime_settings(
         db,
@@ -129,3 +146,51 @@ def complete_setup(db: Session, payload: SetupCompleteRequest) -> None:
     )
     mark_setup_completed(db, completed=True)
     db.commit()
+    clear_setup_validation_cache()
+
+
+def clear_setup_validation_cache() -> None:
+    with _validation_cache_lock:
+        for kind in _validated_setup_payloads:
+            _validated_setup_payloads[kind].clear()
+
+
+def _validate_or_reuse_successful_check(
+    kind: str,
+    payload: dict[str, object],
+    validator: Callable[[], None],
+) -> None:
+    if _has_recent_successful_validation(kind, payload):
+        logger.info("Reusing recent successful %s setup validation", kind)
+        return
+    validator()
+
+
+def _remember_successful_validation(kind: str, payload: dict[str, object]) -> None:
+    fingerprint = _build_validation_fingerprint(payload)
+    expires_at = time.monotonic() + SETUP_VALIDATION_TTL_SECONDS
+    with _validation_cache_lock:
+        bucket = _validated_setup_payloads[kind]
+        _prune_expired_validations(bucket)
+        bucket[fingerprint] = expires_at
+
+
+def _has_recent_successful_validation(kind: str, payload: dict[str, object]) -> bool:
+    fingerprint = _build_validation_fingerprint(payload)
+    with _validation_cache_lock:
+        bucket = _validated_setup_payloads[kind]
+        _prune_expired_validations(bucket)
+        expires_at = bucket.get(fingerprint)
+        return expires_at is not None and expires_at > time.monotonic()
+
+
+def _prune_expired_validations(bucket: dict[str, float]) -> None:
+    now = time.monotonic()
+    expired = [fingerprint for fingerprint, expires_at in bucket.items() if expires_at <= now]
+    for fingerprint in expired:
+        bucket.pop(fingerprint, None)
+
+
+def _build_validation_fingerprint(payload: dict[str, object]) -> str:
+    normalized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

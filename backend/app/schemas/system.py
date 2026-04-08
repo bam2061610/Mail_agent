@@ -351,9 +351,9 @@ class SetupCompleteRequest(BaseModel):
     admin: SetupAdminAccount
     ai: SetupAiConfig
     mailbox: SetupMailboxConfig
-    scheduler_interval_minutes: int = 5
-    followup_overdue_days: int = 3
-    max_emails_per_scan: int = 200
+    scheduler_interval_minutes: int = Field(default=5, ge=1)
+    followup_overdue_days: int = Field(default=3, ge=1)
+    max_emails_per_scan: int = Field(default=200, ge=1)
     ai_analysis_enabled: bool = True
 
 

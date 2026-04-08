@@ -149,6 +149,13 @@ export interface SetupMailboxFormState {
   smtp_use_ssl: boolean;
 }
 
+export interface SetupLaunchFormState {
+  scheduler_interval_minutes: string;
+  followup_overdue_days: string;
+  max_emails_per_scan: string;
+  ai_analysis_enabled: boolean;
+}
+
 export interface SetupCompletePayload {
   admin: SetupAccountFormState;
   ai: SetupAiFormState;
@@ -362,6 +369,12 @@ export const initialSetupMailboxForm: SetupMailboxFormState = {
   smtp_password: "",
   smtp_use_tls: true,
   smtp_use_ssl: true,
+};
+export const initialSetupLaunchForm: SetupLaunchFormState = {
+  scheduler_interval_minutes: "5",
+  followup_overdue_days: "3",
+  max_emails_per_scan: "200",
+  ai_analysis_enabled: true,
 };
 
 export const initialMailboxForm: MailboxFormState = {

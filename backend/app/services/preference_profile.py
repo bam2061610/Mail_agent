@@ -5,13 +5,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.config import DATA_DIR
 from app.db import list_account_database_ids, open_account_session, open_global_session
 from app.models.action_log import ActionLog
 from app.services.settings_service import get_setting, set_setting
 
 PREFERENCE_PROFILE_KEY = "preference_profile"
-PREFERENCE_PROFILE_PATH = DATA_DIR / "preference_profile.json"
 
 
 def rebuild_preference_profile(db_session: Session) -> dict[str, Any]:
