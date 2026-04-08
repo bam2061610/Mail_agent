@@ -9,8 +9,8 @@ from typing import TextIO
 @dataclass(slots=True)
 class ProcessLock:
     path: Path
-    handle: TextIO | None
-    acquired: bool
+    handle: TextIO | None = None
+    acquired: bool = False
 
 
 def acquire_process_lock(path: Path) -> ProcessLock:

@@ -22,7 +22,7 @@ from app.api.routes.stats import router as stats_router
 from app.api.routes.users import router as users_router
 from app.config import DATA_DIR, get_effective_settings, settings
 from app.core.logging import configure_logging
-from app.core.process_lock import acquire_process_lock, release_process_lock
+from app.core.process_lock import ProcessLock, acquire_process_lock, release_process_lock
 from app.core.rate_limiter import limiter
 from app.db import (
     create_tables,
@@ -57,7 +57,14 @@ async def lifespan(app: FastAPI):
         setup_completed = is_setup_completed(db)
     finally:
         db.close()
-    background_lock = acquire_process_lock(DATA_DIR / "background-services.lock")
+    needs_lock = setup_completed and (
+        runtime_settings.run_background_jobs or runtime_settings.run_mail_watchers
+    )
+    background_lock = (
+        acquire_process_lock(DATA_DIR / "background-services.lock")
+        if needs_lock
+        else ProcessLock(path=DATA_DIR / "background-services.lock", acquired=False)
+    )
     app.state.background_lock = background_lock
 
     scheduler = None
