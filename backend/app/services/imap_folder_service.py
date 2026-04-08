@@ -26,11 +26,11 @@ _FOLDER_STATE_CACHE: dict[str, "MailboxFolderState"] = {}
 @dataclass(slots=True)
 class MailboxFolderState:
     separator: str
-    root_folder: str
-    archive_folder: str
-    spam_folder: str
-    processed_folder: str
-    reply_later_folder: str
+    root_folder: str | None
+    archive_folder: str | None
+    spam_folder: str | None
+    processed_folder: str | None
+    reply_later_folder: str | None
 
 
 @dataclass(slots=True)
@@ -154,10 +154,22 @@ def _ensure_folders_on_connection(connection: Any, mailbox: Any, cache_key: str)
     available_lookup = {folder.strip().lower(): folder for folder in available_folders if folder}
 
     root_folder = _ensure_folder_exists(connection, available_lookup, ROOT_FOLDER)
-    archive_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Archive"))
-    spam_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Spam"))
-    processed_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Processed"))
-    reply_later_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "ReplyLater"))
+    archive_folder = (
+        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Archive"))
+        if root_folder else None
+    )
+    spam_folder = (
+        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Spam"))
+        if root_folder else None
+    )
+    processed_folder = (
+        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Processed"))
+        if root_folder else None
+    )
+    reply_later_folder = (
+        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "ReplyLater"))
+        if root_folder else None
+    )
 
     state = MailboxFolderState(
         separator=separator,
@@ -256,10 +268,12 @@ def _ensure_folder_exists(connection: Any, available_lookup: dict[str, str], fol
 
     create = getattr(connection, "create", None)
     if not callable(create):
-        raise RuntimeError("IMAP connection does not support CREATE")
+        logger.warning("IMAP connection does not support CREATE; skipping folder %s", folder_name)
+        return None
     status, _ = create(folder_name)
     if not _is_ok(status):
-        raise RuntimeError(f"Unable to create IMAP folder {folder_name}")
+        logger.warning("Unable to create IMAP folder %s; folder actions will be skipped", folder_name)
+        return None
     available_lookup[folder_name.strip().lower()] = folder_name
     return folder_name
 
