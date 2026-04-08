@@ -112,7 +112,13 @@ def _move_email_on_server(mailbox_config, email: Email, target_kind: str, source
                 message_id=email.message_id,
             )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"IMAP action failed: {exc}") from exc
+        logger.warning(
+            "IMAP move failed for email_id=%s target=%s; continuing with DB-only update: %s",
+            email.id,
+            target_kind,
+            exc,
+        )
+        return
 
     email.imap_uid = result.target_uid or result.source_uid or email.imap_uid
 
