@@ -20,6 +20,12 @@ TARGET_FOLDER_SUFFIXES = {
     "reply later": "ReplyLater",
 }
 
+# Fallback candidates when OMA root folder cannot be created
+SPAM_FALLBACKS = ["Spam", "Junk", "Junk E-mail", "Bulk Mail", "INBOX.Spam", "INBOX.Junk"]
+ARCHIVE_FALLBACKS = ["Archive", "Archived", "All Mail", "[Gmail]/All Mail", "INBOX.Archive"]
+PROCESSED_FALLBACKS = ["Processed", "Done", "INBOX.Processed"]
+REPLY_LATER_FALLBACKS = ["Reply Later", "ReplyLater", "INBOX.ReplyLater", "INBOX.Reply Later"]
+
 _FOLDER_STATE_CACHE: dict[str, "MailboxFolderState"] = {}
 
 
@@ -154,22 +160,36 @@ def _ensure_folders_on_connection(connection: Any, mailbox: Any, cache_key: str)
     available_lookup = {folder.strip().lower(): folder for folder in available_folders if folder}
 
     root_folder = _ensure_folder_exists(connection, available_lookup, ROOT_FOLDER)
-    archive_folder = (
-        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Archive"))
-        if root_folder else None
-    )
-    spam_folder = (
-        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Spam"))
-        if root_folder else None
-    )
-    processed_folder = (
-        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Processed"))
-        if root_folder else None
-    )
-    reply_later_folder = (
-        _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "ReplyLater"))
-        if root_folder else None
-    )
+
+    if root_folder is not None:
+        # Preferred: use OMA/* hierarchy
+        archive_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Archive"))
+        spam_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Spam"))
+        processed_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "Processed"))
+        reply_later_folder = _ensure_folder_exists(connection, available_lookup, _compose_child_folder(root_folder, separator, "ReplyLater"))
+    else:
+        # Fallback: discover or create standard folders the server accepts
+        inbox_prefix = f"INBOX{separator}"
+        spam_folder = (
+            _find_in_lookup(available_lookup, SPAM_FALLBACKS)
+            or _ensure_folder_exists(connection, available_lookup, f"{inbox_prefix}Spam")
+            or _ensure_folder_exists(connection, available_lookup, "Spam")
+        )
+        archive_folder = (
+            _find_in_lookup(available_lookup, ARCHIVE_FALLBACKS)
+            or _ensure_folder_exists(connection, available_lookup, f"{inbox_prefix}Archive")
+            or _ensure_folder_exists(connection, available_lookup, "Archive")
+        )
+        processed_folder = (
+            _find_in_lookup(available_lookup, PROCESSED_FALLBACKS)
+            or _ensure_folder_exists(connection, available_lookup, f"{inbox_prefix}Processed")
+            or _ensure_folder_exists(connection, available_lookup, "Processed")
+        )
+        reply_later_folder = (
+            _find_in_lookup(available_lookup, REPLY_LATER_FALLBACKS)
+            or _ensure_folder_exists(connection, available_lookup, f"{inbox_prefix}ReplyLater")
+            or _ensure_folder_exists(connection, available_lookup, "Reply Later")
+        )
 
     state = MailboxFolderState(
         separator=separator,
@@ -180,10 +200,14 @@ def _ensure_folders_on_connection(connection: Any, mailbox: Any, cache_key: str)
         reply_later_folder=reply_later_folder,
     )
     _FOLDER_STATE_CACHE[cache_key] = state
-    logger.debug(
-        "Ensured IMAP folders for mailbox=%s separator=%s",
+    logger.info(
+        "IMAP folder state for mailbox=%s: root=%s spam=%s archive=%s processed=%s reply_later=%s",
         getattr(mailbox, "id", None),
-        separator,
+        root_folder,
+        spam_folder,
+        archive_folder,
+        processed_folder,
+        reply_later_folder,
     )
     return state
 
@@ -210,18 +234,18 @@ def _discover_folder_separator(connection: Any) -> str:
     try:
         status, folder_list = connection.list()
     except Exception:  # noqa: BLE001
-        return "/"
+        return "."
 
     if not _is_ok(status) or not folder_list:
-        return "/"
+        return "."
 
     for entry in folder_list:
         parsed = _parse_list_entry(entry)
         if parsed is not None:
             separator, _folder_name = parsed
-            if separator:
+            if separator and separator != "NIL":
                 return separator
-    return "/"
+    return "."
 
 
 def _list_folder_names(connection: Any) -> list[str]:
@@ -261,7 +285,17 @@ def _parse_list_entry(entry: Any) -> tuple[str | None, str | None] | None:
     return delimiter, folder_name
 
 
-def _ensure_folder_exists(connection: Any, available_lookup: dict[str, str], folder_name: str) -> str:
+def _find_in_lookup(available_lookup: dict[str, str], candidates: list[str]) -> str | None:
+    for name in candidates:
+        found = available_lookup.get(name.strip().lower())
+        if found:
+            return found
+    return None
+
+
+def _ensure_folder_exists(connection: Any, available_lookup: dict[str, str], folder_name: str) -> str | None:
+    if not folder_name:
+        return None
     existing = _match_existing_folder(available_lookup, folder_name)
     if existing:
         return existing
@@ -275,6 +309,7 @@ def _ensure_folder_exists(connection: Any, available_lookup: dict[str, str], fol
         logger.warning("Unable to create IMAP folder %s; folder actions will be skipped", folder_name)
         return None
     available_lookup[folder_name.strip().lower()] = folder_name
+    logger.info("Created IMAP folder: %s", folder_name)
     return folder_name
 
 
@@ -298,35 +333,46 @@ def _resolve_folder_hint(state: MailboxFolderState, folder_hint: str | None) -> 
     if lowered == "inbox":
         return "INBOX"
 
+    # Priority 1: use pre-resolved state attributes (these are real server folder names)
+    attr_map: dict[str, str | None] = {
+        "archive": state.archive_folder,
+        "archived": state.archive_folder,
+        "spam": state.spam_folder,
+        "processed": state.processed_folder,
+        "reply_later": state.reply_later_folder,
+        "replylater": state.reply_later_folder,
+        "reply later": state.reply_later_folder,
+    }
+    from_attr = attr_map.get(lowered)
+    if from_attr:
+        return from_attr
+
+    # Priority 2: compose via root folder (only when root is available)
     suffix = TARGET_FOLDER_SUFFIXES.get(lowered)
-    if suffix:
+    if suffix and state.root_folder:
         return _compose_child_folder(state.root_folder, state.separator, suffix)
 
-    if lowered.startswith(ROOT_FOLDER.lower()):
-        raw_suffix = normalized[len(ROOT_FOLDER) :].lstrip("/.")
+    # Priority 3: handle paths that start with OMA prefix
+    if state.root_folder and lowered.startswith(ROOT_FOLDER.lower()):
+        raw_suffix = normalized[len(ROOT_FOLDER):].lstrip("/.")
         if not raw_suffix:
             return state.root_folder
-
         raw_lowered = raw_suffix.lower()
-        suffix = TARGET_FOLDER_SUFFIXES.get(raw_lowered)
-        if suffix:
-            return _compose_child_folder(state.root_folder, state.separator, suffix)
-
-        segments = [segment for segment in re.split(r"[/.]", raw_suffix) if segment]
+        mapped_suffix = TARGET_FOLDER_SUFFIXES.get(raw_lowered)
+        if mapped_suffix:
+            return _compose_child_folder(state.root_folder, state.separator, mapped_suffix)
+        segments = [s for s in re.split(r"[/.]", raw_suffix) if s]
         if not segments:
             return state.root_folder
         return f"{state.root_folder}{state.separator}{state.separator.join(segments)}"
 
-    for actual in [
-        state.root_folder,
-        state.archive_folder,
-        state.spam_folder,
-        state.processed_folder,
-        state.reply_later_folder,
-    ]:
+    # Priority 4: match against any known folder name in state
+    for actual in [f for f in [state.root_folder, state.archive_folder, state.spam_folder,
+                                state.processed_folder, state.reply_later_folder] if f]:
         if actual.lower() == lowered:
             return actual
 
+    # Priority 5: return as-is (may already be a valid server folder name)
     return normalized
 
 
@@ -427,3 +473,4 @@ def _close_connection(connection: Any | None) -> None:
             logout()
     except Exception:  # noqa: BLE001
         pass
+
