@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
-import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, ApiError, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, saveStoredAuthToken } from "../api";
+import { AUTH_TOKEN_CLEARED_EVENT, AUTH_TOKEN_UPDATED_EVENT, apiGet, apiPost, clearStoredAuthToken, getErrorMessage, getStoredAuthToken, isAuthError, isNetworkError, isSetupRequiredError, saveStoredAuthToken } from "../api";
 import { initialLoginForm, type AuthLoginResponse, type AuthMeResponse, type LoginFormState, type UserItem } from "../types";
 
 type UseAuthResult = {
@@ -17,7 +17,7 @@ type UseAuthResult = {
   actionLoading: string | null;
 };
 
-export function useAuth(): UseAuthResult {
+export function useAuth(enabled = true): UseAuthResult {
   const [authToken, setAuthToken] = useState<string>(() => getStoredAuthToken());
   const [currentUser, setCurrentUser] = useState<UserItem | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -25,36 +25,55 @@ export function useAuth(): UseAuthResult {
   const [authError, setAuthError] = useState("");
   const [authSuccess, setAuthSuccess] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const authMutationVersionRef = useRef(0);
 
   const bootstrapAuth = useCallback(async () => {
+    const mutationVersion = authMutationVersionRef.current;
     setAuthLoading(true);
     try {
-      if (!authToken) {
+      if (!enabled) {
+        if (mutationVersion !== authMutationVersionRef.current) return;
         setCurrentUser(null);
         setAuthError("");
         return;
       }
+      if (!authToken) {
+        if (mutationVersion !== authMutationVersionRef.current) return;
+        setCurrentUser(null);
+        return;
+      }
       const me = await apiGet<AuthMeResponse>("/api/auth/me");
+      if (mutationVersion !== authMutationVersionRef.current) return;
       setCurrentUser(me.user);
       setAuthError("");
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
+      if (mutationVersion !== authMutationVersionRef.current) return;
+      if (isAuthError(error)) {
         clearStoredAuthToken();
         setAuthToken("");
         setAuthError("Session expired. Please sign in again.");
+      } else if (isSetupRequiredError(error)) {
+        setAuthError(getErrorMessage(error, "Setup is required before sign-in."));
+      } else if (isNetworkError(error)) {
+        setAuthError(getErrorMessage(error, "Unable to verify your session. Please check the backend connection."));
       } else {
         setAuthError(getErrorMessage(error, "Unable to verify your session. Please sign in again."));
       }
       setCurrentUser(null);
     } finally {
+      if (mutationVersion !== authMutationVersionRef.current) return;
       setAuthLoading(false);
     }
-  }, [authToken]);
+  }, [authToken, enabled]);
 
   const handleLogin = useCallback(async (event: FormEvent) => {
     event.preventDefault();
     setAuthError("");
     setAuthSuccess("");
+    if (!enabled) {
+      setAuthError("Setup is required before sign-in.");
+      return;
+    }
     if (!loginForm.email.trim() || !loginForm.password) {
       setAuthError("Email and password are required.");
       return;
@@ -62,16 +81,22 @@ export function useAuth(): UseAuthResult {
     setActionLoading("auth-login");
     try {
       const response = await apiPost<AuthLoginResponse>("/api/auth/login", loginForm);
+      authMutationVersionRef.current += 1;
       saveStoredAuthToken(response.access_token);
       setAuthToken(response.access_token);
       setCurrentUser(response.user);
+      setAuthLoading(false);
       setAuthSuccess("Logged in.");
     } catch (error) {
-      setAuthError(getErrorMessage(error, "Login failed."));
+      if (isSetupRequiredError(error)) {
+        setAuthError(getErrorMessage(error, "Setup is required before sign-in."));
+      } else {
+        setAuthError(getErrorMessage(error, "Login failed."));
+      }
     } finally {
       setActionLoading(null);
     }
-  }, [loginForm]);
+  }, [enabled, loginForm]);
 
   const handleLogout = useCallback(async () => {
     setActionLoading("auth-logout");
@@ -80,6 +105,7 @@ export function useAuth(): UseAuthResult {
     } catch {
       // best effort logout
     } finally {
+      authMutationVersionRef.current += 1;
       clearStoredAuthToken();
       setAuthToken("");
       setCurrentUser(null);

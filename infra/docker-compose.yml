@@ -6,6 +6,7 @@ services:
     environment:
       RUN_BACKGROUND_JOBS: "false"
       RUN_MAIL_WATCHERS: "false"
+      PYTHONUNBUFFERED: "1"
     ports: ["8000:8000"]
     volumes:
       - backend_data:/app/data
@@ -16,6 +17,7 @@ services:
     environment:
       RUN_BACKGROUND_JOBS: "true"
       RUN_MAIL_WATCHERS: "true"
+      PYTHONUNBUFFERED: "1"
     depends_on: [backend]
     volumes:
       - backend_data:/app/data

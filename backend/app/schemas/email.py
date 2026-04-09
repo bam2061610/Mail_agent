@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+EmailStatus = Literal["new", "read", "reply_later", "processed", "replied", "archived", "spam"]
 
 
 class EmailListItem(BaseModel):
@@ -16,7 +18,7 @@ class EmailListItem(BaseModel):
     mailbox_address: str | None = None
     imap_uid: str | None = None
     date_received: datetime | None = None
-    status: str
+    status: EmailStatus
     priority: str | None = None
     importance_score: int | None = None
     category: str | None = None
@@ -72,11 +74,11 @@ class EmailCreateDraftRequest(BaseModel):
 
 
 class EmailUpdateStatusRequest(BaseModel):
-    status: str
+    status: EmailStatus
 
 
 class EmailStatusUpdateRequest(BaseModel):
-    status: str
+    status: EmailStatus
 
 
 class EmailReplyLaterRequest(BaseModel):

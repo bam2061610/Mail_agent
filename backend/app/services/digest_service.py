@@ -1,16 +1,17 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.config import DATA_DIR
+from app.db import open_global_session
 from app.models.action_log import ActionLog
 from app.models.email import Email
 from app.models.task import Task
 from app.services.mailbox_service import SENT_DIRECTION_VALUES
-
-STATE_FILE_PATH = DATA_DIR / "digest_state.json"
+from app.services.settings_service import get_setting, set_setting
 
 
 @dataclass(slots=True)
@@ -27,13 +28,20 @@ class CatchupDigest:
     top_actions: list[str]
 
 
-def generate_catchup_digest(db_session: Session, config, now: datetime | None = None) -> CatchupDigest:
+STATE_FILE_PATH = DATA_DIR / "digest_state.json"
+
+
+def generate_catchup_digest(
+    db_session: Session,
+    config,
+    user_id: int = 0,
+    now: datetime | None = None,
+) -> CatchupDigest:
     current_time = now or datetime.now(timezone.utc)
-    state = _load_state()
+    state = _load_state(user_id)
     last_seen_at = _parse_dt(state.get("last_seen_at"))
     catchup_hours = max(1, int(getattr(config, "catchup_absence_hours", 8) or 8))
     if last_seen_at is None:
-        # First run fallback: look back one day.
         last_seen_at = current_time - timedelta(hours=24)
 
     away_hours = max(0, int((current_time - last_seen_at).total_seconds() // 3600))
@@ -58,8 +66,6 @@ def generate_catchup_digest(db_session: Session, config, now: datetime | None = 
         .filter(
             Task.task_type == "followup",
             Task.state.in_(["waiting_reply", "overdue_reply"]),
-            # Always surface overdue follow-ups in catch-up, even if they started
-            # before the current "since" window.
             or_(
                 Task.state == "overdue_reply",
                 Task.followup_started_at.is_(None),
@@ -139,6 +145,7 @@ def generate_catchup_digest(db_session: Session, config, now: datetime | None = 
                     "spam_review_count": len(spam_review),
                     "recent_sent_count": len(recent_sent),
                     "followups_due_count": len(followups_due),
+                    "user_id": user_id,
                 },
                 ensure_ascii=False,
             ),
@@ -160,17 +167,21 @@ def generate_catchup_digest(db_session: Session, config, now: datetime | None = 
     )
 
 
-def mark_digest_seen(db_session: Session, when: datetime | None = None) -> dict[str, str]:
+def mark_digest_seen(
+    db_session: Session,
+    user_id: int = 0,
+    when: datetime | None = None,
+) -> dict[str, str]:
     now = when or datetime.now(timezone.utc)
-    state = _load_state()
+    state = _load_state(user_id)
     state["last_seen_at"] = now.isoformat()
     state["last_digest_viewed_at"] = now.isoformat()
-    _save_state(state)
+    _save_state(user_id, state)
     db_session.add(
         ActionLog(
             action_type="digest_viewed",
             actor="user",
-            details_json=json.dumps({"seen_at": now.isoformat()}, ensure_ascii=False),
+            details_json=json.dumps({"seen_at": now.isoformat(), "user_id": user_id}, ensure_ascii=False),
         )
     )
     db_session.commit()
@@ -180,8 +191,8 @@ def mark_digest_seen(db_session: Session, when: datetime | None = None) -> dict[
     }
 
 
-def get_digest_state() -> dict[str, str | None]:
-    state = _load_state()
+def get_digest_state(user_id: int = 0) -> dict[str, str | None]:
+    state = _load_state(user_id)
     return {
         "last_seen_at": state.get("last_seen_at"),
         "last_digest_viewed_at": state.get("last_digest_viewed_at"),
@@ -259,16 +270,19 @@ def _parse_dt(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _load_state() -> dict:
-    if not STATE_FILE_PATH.exists():
-        return {}
+def _load_state(user_id: int) -> dict:
+    db = open_global_session()
     try:
-        payload = json.loads(STATE_FILE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+        payload = get_setting(db, f"digest_state_{user_id}", default={})
+        return payload if isinstance(payload, dict) else {}
+    finally:
+        db.close()
 
 
-def _save_state(payload: dict) -> None:
-    STATE_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+def _save_state(user_id: int, payload: dict) -> None:
+    db = open_global_session()
+    try:
+        set_setting(db, f"digest_state_{user_id}", payload)
+        db.commit()
+    finally:
+        db.close()

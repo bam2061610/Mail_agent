@@ -56,7 +56,9 @@ def test_create_user_rejects_duplicate_email(client, admin_auth_headers, admin_u
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "User with this email already exists"
+    payload = response.json()
+    assert payload["message"] == "User with this email already exists"
+    assert payload["error_code"] == "validation_error"
 
 
 def test_update_user_via_api_updates_profile_fields(client, admin_auth_headers, operator_user, db_session):
@@ -98,7 +100,9 @@ def test_disable_user_rejects_self_disable(client, admin_auth_headers, admin_use
     response = client.post(f"/api/users/{admin_user.id}/disable", headers=admin_auth_headers)
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "You cannot disable your own account"
+    payload = response.json()
+    assert payload["message"] == "You cannot disable your own account"
+    assert payload["error_code"] == "validation_error"
 
 
 def test_reset_password_via_api_allows_login_with_new_password(client, admin_auth_headers, operator_user):

@@ -85,60 +85,64 @@ def move_email_via_imap(
 ) -> MailboxActionResult:
     if not getattr(email, "message_id", None):
         raise ValueError("Email message_id is required for IMAP actions")
+
+    source_folder = _normalize_folder_name(getattr(email, "folder", None)) or "INBOX"
+    target_folder = folder_kind  # fallback if IMAP unavailable
+    imap_moved = False
+    message_uid = None
+
     connection = connect_imap(mailbox_config)
     try:
-        source_folder = _normalize_folder_name(getattr(email, "folder", None)) or "INBOX"
         target_folder = resolve_target_folder(connection, folder_kind)
-        if _normalize_folder_name(source_folder) == _normalize_folder_name(target_folder):
-            return MailboxActionResult(
-                status="noop",
-                folder=target_folder,
-                message_id=email.message_id,
-                action=folder_kind,
-                details={"reason": "already_in_target_folder"},
-            )
-
-        message_uid = _find_message_uid(connection, source_folder, email.message_id)
-        if message_uid is None:
-            raise RuntimeError(f"Message {email.message_id} was not found in IMAP folder {source_folder}")
-
-        _ensure_folder_exists(connection, target_folder)
-        if mark_seen:
-            _safe_uid_command(connection, "store", message_uid, "+FLAGS.SILENT", r"(\Seen)")
-        copy_status, _ = _safe_uid_command(connection, "copy", message_uid, target_folder)
-        if not _is_ok(copy_status):
-            raise RuntimeError(f"Unable to copy message to {target_folder}")
-        _safe_uid_command(connection, "store", message_uid, "+FLAGS.SILENT", r"(\Deleted)")
-        _safe_expunge(connection)
-        email.folder = target_folder
-        if set_archived:
-            email.status = "archived"
-            email.requires_reply = False
-        elif set_spam:
-            email.status = "spam"
-            email.is_spam = True
-            email.spam_source = "user"
-            email.spam_reason = "Moved to spam folder"
-            email.requires_reply = False
-        elif set_reply_later:
-            email.status = "archived"
-            email.requires_reply = False
-        email.updated_at = datetime.now(timezone.utc)
-        db_session.add(email)
-        db_session.commit()
-        return MailboxActionResult(
-            status="moved",
-            folder=target_folder,
-            message_id=email.message_id,
-            action=folder_kind,
-            details={"source_folder": source_folder, "target_folder": target_folder, "message_uid": message_uid},
-        )
+        if _normalize_folder_name(source_folder) != _normalize_folder_name(target_folder):
+            message_uid = _find_message_uid(connection, source_folder, email.message_id)
+            if message_uid is None:
+                logger.warning(
+                    "Message %s not found in IMAP folder %s; DB-only update",
+                    email.message_id,
+                    source_folder,
+                )
+            elif _ensure_folder_exists(connection, target_folder):
+                if mark_seen:
+                    _safe_uid_command(connection, "store", message_uid, "+FLAGS.SILENT", r"(\Seen)")
+                copy_status, _ = _safe_uid_command(connection, "copy", message_uid, target_folder)
+                if _is_ok(copy_status):
+                    _safe_uid_command(connection, "store", message_uid, "+FLAGS.SILENT", r"(\Deleted)")
+                    _safe_expunge(connection)
+                    email.folder = target_folder
+                    imap_moved = True
+                else:
+                    logger.warning("IMAP copy to %s failed; DB-only update", target_folder)
+            else:
+                logger.warning("IMAP folder %s unavailable; DB-only update", target_folder)
+        else:
+            # already in correct folder — still apply DB status below
+            pass
     except Exception:
-        db_session.rollback()
-        logger.exception("IMAP folder action failed for email_id=%s kind=%s", email.id, folder_kind)
-        raise
+        logger.warning(
+            "IMAP action failed for email_id=%s kind=%s; falling back to DB-only update",
+            email.id,
+            folder_kind,
+            exc_info=True,
+        )
     finally:
         _close_connection(connection)
+
+    _apply_db_status(db_session, email, set_archived=set_archived, set_spam=set_spam, set_reply_later=set_reply_later)
+    db_session.commit()
+
+    return MailboxActionResult(
+        status="moved" if imap_moved else "db_only",
+        folder=target_folder,
+        message_id=email.message_id,
+        action=folder_kind,
+        details={
+            "source_folder": source_folder,
+            "target_folder": target_folder,
+            "message_uid": message_uid.decode("utf-8", "ignore") if isinstance(message_uid, bytes) else message_uid,
+            "imap_moved": imap_moved,
+        },
+    )
 
 
 def append_sent_copy_to_imap(
@@ -151,7 +155,9 @@ def append_sent_copy_to_imap(
     connection = connect_imap(mailbox_config)
     try:
         folder = resolve_target_folder(connection, folder_kind)
-        _ensure_folder_exists(connection, folder)
+        if not _ensure_folder_exists(connection, folder):
+            logger.warning("Sent folder %s unavailable; skipping sent copy", folder)
+            return folder
         flags = "\\Seen" if save_copy_as_seen else None
         date_time = format_datetime(datetime.now(timezone.utc))
         raw_bytes = message.as_bytes()
@@ -162,11 +168,11 @@ def append_sent_copy_to_imap(
         append_args.append(raw_bytes)
         status, _ = connection.append(*append_args)
         if not _is_ok(status):
-            raise RuntimeError(f"Unable to append message to {folder}")
+            logger.warning("Unable to append message to IMAP folder %s", folder)
         return folder
     except Exception:
-        logger.exception("Failed to append sent message copy to IMAP folder")
-        raise
+        logger.warning("Failed to append sent message copy to IMAP folder", exc_info=True)
+        return folder_kind
     finally:
         _close_connection(connection)
 
@@ -189,16 +195,41 @@ def resolve_target_folder(connection: Any, folder_kind: str) -> str:
     return folder_kind
 
 
-def _ensure_folder_exists(connection: Any, folder_name: str) -> None:
+def _ensure_folder_exists(connection: Any, folder_name: str) -> bool:
     available = _list_folders(connection)
     if _match_existing_folder(available, [folder_name]):
-        return
+        return True
     result = getattr(connection, "create", None)
     if callable(result):
         status, _ = result(folder_name)
         if _is_ok(status):
-            return
-    raise RuntimeError(f"Unable to create IMAP folder {folder_name}")
+            return True
+    logger.warning("Unable to create IMAP folder %s; will skip IMAP move", folder_name)
+    return False
+
+
+def _apply_db_status(
+    db_session: Session,
+    email: Email,
+    *,
+    set_archived: bool,
+    set_spam: bool,
+    set_reply_later: bool,
+) -> None:
+    if set_archived:
+        email.status = "archived"
+        email.requires_reply = False
+    elif set_spam:
+        email.status = "spam"
+        email.is_spam = True
+        email.spam_source = "user"
+        email.spam_reason = "Moved to spam folder"
+        email.requires_reply = False
+    elif set_reply_later:
+        email.status = "archived"
+        email.requires_reply = False
+    email.updated_at = datetime.now(timezone.utc)
+    db_session.add(email)
 
 
 def _find_message_uid(connection: Any, folder: str, message_id: str) -> bytes | None:

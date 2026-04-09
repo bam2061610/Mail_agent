@@ -99,20 +99,87 @@ export type SettingsResponse = {
   smtp_use_ssl: boolean;
   deepseek_base_url: string;
   deepseek_model: string;
+  ai_analysis_enabled: boolean;
   interface_language: string;
   summary_language: string;
   scan_since_date: string | null;
   auto_spam_enabled: boolean;
-  scan_interval_minutes: number;
+  scheduler_interval_minutes: number;
   followup_overdue_days: number;
   catchup_absence_hours: number;
   sent_review_batch_limit: number;
+  max_emails_per_scan: number;
   cors_origins: string[];
   signature?: string | null;
   has_imap_password: boolean;
   has_smtp_password: boolean;
+  has_deepseek_api_key: boolean;
   has_openai_api_key: boolean;
 };
+
+export interface SetupStatusResponse {
+  completed: boolean;
+}
+
+export interface SetupAccountFormState {
+  email: string;
+  full_name: string;
+  password: string;
+  confirm_password: string;
+}
+
+export interface SetupAiFormState {
+  deepseek_api_key: string;
+  deepseek_model: string;
+  deepseek_base_url: string;
+}
+
+export interface SetupMailboxFormState {
+  name: string;
+  email_address: string;
+  imap_host: string;
+  imap_port: string;
+  imap_username: string;
+  imap_password: string;
+  smtp_host: string;
+  smtp_port: string;
+  smtp_username: string;
+  smtp_password: string;
+  smtp_use_tls: boolean;
+  smtp_use_ssl: boolean;
+}
+
+export interface SetupLaunchFormState {
+  scheduler_interval_minutes: string;
+  followup_overdue_days: string;
+  max_emails_per_scan: string;
+  ai_analysis_enabled: boolean;
+}
+
+export interface SetupCompletePayload {
+  admin: SetupAccountFormState;
+  ai: SetupAiFormState;
+  mailbox: {
+    name: string;
+    email_address: string;
+    imap_host: string;
+    imap_port: number;
+    imap_username: string;
+    imap_password: string;
+    smtp_host: string;
+    smtp_port: number;
+    smtp_username: string;
+    smtp_password: string;
+    smtp_use_tls: boolean;
+    smtp_use_ssl: boolean;
+    enabled: boolean;
+    is_default_outgoing: boolean;
+  };
+  scheduler_interval_minutes: number;
+  followup_overdue_days: number;
+  max_emails_per_scan: number;
+  ai_analysis_enabled: boolean;
+}
 
 export type ContactListResponse = { items: Array<{ id: number; email: string; name?: string | null; company?: string | null }>; total: number; limit: number; offset: number };
 export type ScanResponse = { imported_count: number; analyzed_count: number; errors: string[] };
@@ -278,6 +345,37 @@ export const initialTemplateForm: TemplateFormState = {
 
 export const initialLoginForm: LoginFormState = { email: "", password: "" };
 export const initialUserForm: UserFormState = { email: "", full_name: "", password: "", role: "operator" };
+export const initialSetupAccountForm: SetupAccountFormState = {
+  email: "",
+  full_name: "",
+  password: "",
+  confirm_password: "",
+};
+export const initialSetupAiForm: SetupAiFormState = {
+  deepseek_api_key: "",
+  deepseek_model: "deepseek-chat",
+  deepseek_base_url: "https://api.deepseek.com",
+};
+export const initialSetupMailboxForm: SetupMailboxFormState = {
+  name: "",
+  email_address: "",
+  imap_host: "",
+  imap_port: "993",
+  imap_username: "",
+  imap_password: "",
+  smtp_host: "",
+  smtp_port: "465",
+  smtp_username: "",
+  smtp_password: "",
+  smtp_use_tls: true,
+  smtp_use_ssl: true,
+};
+export const initialSetupLaunchForm: SetupLaunchFormState = {
+  scheduler_interval_minutes: "5",
+  followup_overdue_days: "3",
+  max_emails_per_scan: "200",
+  ai_analysis_enabled: true,
+};
 
 export const initialMailboxForm: MailboxFormState = {
   name: "",

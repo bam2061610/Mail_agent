@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any
+
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from app.exceptions import AiError
 
 logger = logging.getLogger(__name__)
 
 
-class DeepSeekError(RuntimeError):
-    pass
+class DeepSeekError(AiError):
+    """Base DeepSeek client error."""
 
 
 class DeepSeekTimeoutError(DeepSeekError):
-    pass
+    """Raised when DeepSeek times out."""
 
 
 class DeepSeekRateLimitError(DeepSeekError):
-    pass
+    """Raised when DeepSeek rate limits a request."""
 
 
 class DeepSeekResponseError(DeepSeekError):
-    pass
+    """Raised when DeepSeek returns an invalid payload."""
 
 
 @dataclass(slots=True)
@@ -45,9 +48,9 @@ def call_deepseek_chat(
             APITimeoutError = TimeoutError  # type: ignore[assignment]
             RateLimitError = RuntimeError  # type: ignore[assignment]
     except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("openai package is required for DeepSeek integration") from exc
+        raise DeepSeekError("openai package is required for DeepSeek integration") from exc
 
-    api_key = getattr(config, "openai_api_key", None)
+    api_key = getattr(config, "deepseek_api_key", None) or getattr(config, "openai_api_key", None)
     if not api_key:
         raise ValueError("DeepSeek API key is not configured")
 
@@ -56,10 +59,15 @@ def call_deepseek_chat(
         base_url=getattr(config, "deepseek_base_url", "https://api.deepseek.com"),
         timeout=getattr(config, "ai_timeout_seconds", 60),
     )
-
     retries = max(1, int(getattr(config, "ai_max_retries", 3) or 3))
-    last_error: Exception | None = None
-    for attempt in range(1, retries + 1):
+
+    @retry(
+        retry=retry_if_exception_type(DeepSeekError),
+        stop=stop_after_attempt(retries),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    def _request() -> DeepSeekCallResult:
         try:
             response = client.chat.completions.create(
                 model=getattr(config, "deepseek_model", "deepseek-chat"),
@@ -72,29 +80,20 @@ def call_deepseek_chat(
             content = response.choices[0].message.content
             if not content:
                 raise DeepSeekResponseError("Empty DeepSeek response")
-            return DeepSeekCallResult(content=content, model=getattr(config, "deepseek_model", "deepseek-chat"))
+            return DeepSeekCallResult(
+                content=content,
+                model=getattr(config, "deepseek_model", "deepseek-chat"),
+            )
         except (APITimeoutError, TimeoutError) as exc:  # type: ignore[arg-type]
-            last_error = exc
-            logger.warning("DeepSeek timeout on attempt %s/%s: %s", attempt, retries, exc)
-            if attempt < retries:
-                time.sleep(min(2 * attempt, 5))
-                continue
+            logger.warning("DeepSeek timeout", exc_info=True)
             raise DeepSeekTimeoutError(str(exc)) from exc
         except RateLimitError as exc:  # type: ignore[arg-type]
-            last_error = exc
-            logger.warning("DeepSeek rate limit on attempt %s/%s: %s", attempt, retries, exc)
-            if attempt < retries:
-                time.sleep(min(2 * attempt, 5))
-                continue
+            logger.warning("DeepSeek rate limit", exc_info=True)
             raise DeepSeekRateLimitError(str(exc)) from exc
         except DeepSeekResponseError:
             raise
         except Exception as exc:  # noqa: BLE001
-            last_error = exc
-            logger.warning("DeepSeek request failed on attempt %s/%s: %s", attempt, retries, exc)
-            if attempt < retries:
-                time.sleep(min(2 * attempt, 5))
-                continue
+            logger.warning("DeepSeek request failed", exc_info=True)
             raise DeepSeekError(str(exc)) from exc
 
-    raise DeepSeekError(str(last_error) if last_error else "DeepSeek call failed")
+    return _request()

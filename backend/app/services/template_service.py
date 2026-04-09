@@ -1,76 +1,108 @@
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import select
+
 from app.config import DATA_DIR
+from app.db import open_global_session
+from app.models.template import Template
+
+logger = logging.getLogger(__name__)
 
 TEMPLATES_FILE_PATH = DATA_DIR / "templates.json"
+TEMPLATES_MIGRATED_FILE_PATH = DATA_DIR / "templates.json.migrated"
 SUPPORTED_LANGUAGES = {"ru", "en", "tr"}
 
 
 def list_templates(language: str | None = None) -> list[dict[str, Any]]:
-    templates = _load_templates()
-    if language:
-        templates = [item for item in templates if item.get("language") == language]
-    return sorted(templates, key=lambda item: (item.get("category", ""), item.get("name", "")))
+    _ensure_templates_seeded()
+    db = open_global_session()
+    try:
+        query = select(Template)
+        if language:
+            query = query.where(Template.language == language)
+        rows = db.execute(query.order_by(Template.category.asc(), Template.name.asc())).scalars().all()
+        return [_template_to_dict(row) for row in rows]
+    finally:
+        db.close()
 
 
 def get_template(template_id: str) -> dict[str, Any] | None:
-    for template in _load_templates():
-        if template.get("id") == template_id:
-            return template
-    return None
+    _ensure_templates_seeded()
+    db = open_global_session()
+    try:
+        row = db.get(Template, template_id)
+        return _template_to_dict(row) if row is not None else None
+    finally:
+        db.close()
 
 
 def create_template(payload: dict[str, Any]) -> dict[str, Any]:
-    templates = _load_templates()
-    now = datetime.now(timezone.utc).isoformat()
-    template = {
-        "id": payload.get("id") or str(uuid4()),
-        "name": str(payload.get("name") or "Untitled template").strip() or "Untitled template",
-        "category": str(payload.get("category") or "general").strip() or "general",
-        "language": _normalize_language(payload.get("language")) or "en",
-        "subject_template": _normalize_text(payload.get("subject_template")),
-        "body_template": str(payload.get("body_template") or "").strip(),
-        "enabled": bool(payload.get("enabled", True)),
-        "created_at": payload.get("created_at") or now,
-        "updated_at": now,
-    }
-    templates.append(template)
-    _save_templates(templates)
-    return template
+    _ensure_templates_seeded()
+    db = open_global_session()
+    try:
+        now = datetime.now(timezone.utc)
+        row = Template(
+            id=str(payload.get("id") or uuid4()),
+            name=str(payload.get("name") or "Untitled template").strip() or "Untitled template",
+            category=str(payload.get("category") or "general").strip() or "general",
+            language=_normalize_language(payload.get("language")) or "en",
+            subject=_normalize_text(payload.get("subject_template")),
+            body=str(payload.get("body_template") or "").strip(),
+            enabled=bool(payload.get("enabled", True)),
+            created_at=_parse_iso(payload.get("created_at")) or now,
+            updated_at=now,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _template_to_dict(row)
+    finally:
+        db.close()
 
 
 def update_template(template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-    templates = _load_templates()
-    for index, current in enumerate(templates):
-        if current.get("id") != template_id:
-            continue
-        updated = current.copy()
-        for key in ["name", "category", "body_template"]:
+    _ensure_templates_seeded()
+    db = open_global_session()
+    try:
+        row = db.get(Template, template_id)
+        if row is None:
+            return None
+        for key, attr_name in [("name", "name"), ("category", "category")]:
             if key in payload and payload[key] is not None:
-                updated[key] = str(payload[key]).strip() or updated[key]
+                setattr(row, attr_name, str(payload[key]).strip() or getattr(row, attr_name))
+        if "body_template" in payload and payload["body_template"] is not None:
+            row.body = str(payload["body_template"]).strip() or row.body
         if "subject_template" in payload:
-            updated["subject_template"] = _normalize_text(payload.get("subject_template"))
+            row.subject = _normalize_text(payload.get("subject_template"))
         if "language" in payload and payload["language"] is not None:
-            updated["language"] = _normalize_language(payload["language"]) or updated["language"]
+            row.language = _normalize_language(payload["language"]) or row.language
         if "enabled" in payload and payload["enabled"] is not None:
-            updated["enabled"] = bool(payload["enabled"])
-        updated["updated_at"] = datetime.now(timezone.utc).isoformat()
-        templates[index] = updated
-        _save_templates(templates)
-        return updated
-    return None
+            row.enabled = bool(payload["enabled"])
+        row.updated_at = datetime.now(timezone.utc)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _template_to_dict(row)
+    finally:
+        db.close()
 
 
 def delete_template(template_id: str) -> bool:
-    templates = _load_templates()
-    filtered = [item for item in templates if item.get("id") != template_id]
-    if len(filtered) == len(templates):
-        return False
-    _save_templates(filtered)
-    return True
+    _ensure_templates_seeded()
+    db = open_global_session()
+    try:
+        row = db.get(Template, template_id)
+        if row is None:
+            return False
+        db.delete(row)
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 def render_template_context(template: dict[str, Any], email_context: dict[str, Any]) -> dict[str, Any]:
@@ -84,23 +116,77 @@ def render_template_context(template: dict[str, Any], email_context: dict[str, A
     }
 
 
-def _load_templates() -> list[dict[str, Any]]:
-    if not TEMPLATES_FILE_PATH.exists():
-        defaults = _default_templates()
-        _save_templates(defaults)
-        return defaults
+def _ensure_templates_seeded() -> None:
+    db = open_global_session()
     try:
-        raw = json.loads(TEMPLATES_FILE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return _default_templates()
-    if not isinstance(raw, list):
-        return _default_templates()
-    return [item for item in raw if isinstance(item, dict)]
+        existing = db.execute(select(Template.id).limit(1)).scalar_one_or_none()
+        if existing is not None:
+            _rename_legacy_templates_file_if_present()
+            return
+
+        seeded = False
+        if TEMPLATES_FILE_PATH.exists():
+            try:
+                raw = json.loads(TEMPLATES_FILE_PATH.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                logger.warning("Could not load templates from %s", TEMPLATES_FILE_PATH, exc_info=True)
+                raw = []
+            if isinstance(raw, list):
+                for item in raw:
+                    if not isinstance(item, dict):
+                        continue
+                    db.add(
+                        Template(
+                            id=str(item.get("id") or uuid4()),
+                            name=str(item.get("name") or "Untitled template").strip() or "Untitled template",
+                            category=str(item.get("category") or "general").strip() or "general",
+                            language=_normalize_language(item.get("language")) or "en",
+                            subject=_normalize_text(item.get("subject_template")),
+                            body=str(item.get("body_template") or "").strip(),
+                            enabled=bool(item.get("enabled", True)),
+                            created_at=_parse_iso(item.get("created_at")) or datetime.now(timezone.utc),
+                            updated_at=_parse_iso(item.get("updated_at")) or datetime.now(timezone.utc),
+                        )
+                    )
+                    seeded = True
+        if not seeded:
+            for item in _default_templates():
+                db.add(
+                    Template(
+                        id=item["id"],
+                        name=item["name"],
+                        category=item["category"],
+                        language=item["language"],
+                        subject=item["subject_template"],
+                        body=item["body_template"],
+                        enabled=bool(item["enabled"]),
+                        created_at=_parse_iso(item["created_at"]) or datetime.now(timezone.utc),
+                        updated_at=_parse_iso(item["updated_at"]) or datetime.now(timezone.utc),
+                    )
+                )
+        db.commit()
+        _rename_legacy_templates_file_if_present()
+    finally:
+        db.close()
 
 
-def _save_templates(templates: list[dict[str, Any]]) -> None:
-    TEMPLATES_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TEMPLATES_FILE_PATH.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding="utf-8")
+def _rename_legacy_templates_file_if_present() -> None:
+    if TEMPLATES_FILE_PATH.exists() and not TEMPLATES_MIGRATED_FILE_PATH.exists():
+        TEMPLATES_FILE_PATH.rename(TEMPLATES_MIGRATED_FILE_PATH)
+
+
+def _template_to_dict(row: Template) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "name": row.name,
+        "category": row.category,
+        "language": row.language,
+        "subject_template": row.subject,
+        "body_template": row.body,
+        "enabled": bool(row.enabled),
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+        "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+    }
 
 
 def _normalize_language(value: Any) -> str | None:
@@ -159,3 +245,17 @@ def _default_templates() -> list[dict[str, Any]]:
         }
         for item_id, name, category, language, subject_template, body_template in defaults
     ]
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

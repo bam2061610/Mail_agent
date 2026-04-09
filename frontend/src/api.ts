@@ -7,13 +7,35 @@ export const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_UR
 
 let refreshTokenPromise: Promise<string | null> | null = null;
 
+export type ApiErrorDetails = Record<string, unknown> | null;
+
+export type StructuredApiErrorPayload = {
+  error_code: string;
+  message: string;
+  details?: ApiErrorDetails;
+};
+
 export class ApiError extends Error {
   status: number;
+  errorCode: string;
+  details: ApiErrorDetails;
+  isNetworkError = false;
 
-  constructor(status: number, message: string) {
-    super(message);
+  constructor(status: number, payload: StructuredApiErrorPayload) {
+    super(payload.message);
     this.name = "ApiError";
     this.status = status;
+    this.errorCode = payload.error_code;
+    this.details = payload.details ?? null;
+  }
+}
+
+export class NetworkError extends Error {
+  isNetworkError = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "NetworkError";
   }
 }
 
@@ -90,7 +112,7 @@ export async function requestJson<T>(url: string, init: RequestInit): Promise<T>
     return parseResponse<T>(response);
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(`Network error while reaching API (${buildApiUrl(url)}). Check backend availability, proxy, and CORS.`);
+      throw new NetworkError(`Network error while reaching API (${buildApiUrl(url)}). Check backend availability, proxy, and CORS.`);
     }
     throw error;
   }
@@ -104,7 +126,30 @@ export async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError || error instanceof NetworkError) {
+    return error.message;
+  }
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+export function getApiErrorCode(error: unknown): string | null {
+  return error instanceof ApiError ? error.errorCode : null;
+}
+
+export function isAuthError(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === "auth_required";
+}
+
+export function isSetupRequiredError(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === "setup_required";
+}
+
+export function isMailboxContextError(error: unknown): boolean {
+  return error instanceof ApiError && (error.errorCode === "mailbox_context_missing" || error.errorCode === "mailbox_context_mismatch");
+}
+
+export function isNetworkError(error: unknown): boolean {
+  return error instanceof NetworkError;
 }
 
 export type ReplyRequestPayload = {
@@ -184,24 +229,98 @@ async function refreshAccessToken(): Promise<string | null> {
   }
 }
 
-async function extractErrorDetail(response: Response): Promise<string> {
-  let detail = `${response.status} ${response.statusText}`;
+async function extractErrorDetail(response: Response): Promise<StructuredApiErrorPayload> {
+  const fallbackPayload: StructuredApiErrorPayload = {
+    error_code: inferErrorCodeFromStatus(response.status),
+    message: `${response.status} ${response.statusText}`.trim(),
+  };
+  let rawBody = "";
   try {
-    const data = (await response.json()) as { detail?: string | { message?: string } };
-    if (typeof data?.detail === "string" && data.detail.trim()) return data.detail;
-    if (data?.detail && typeof data.detail === "object" && typeof data.detail.message === "string" && data.detail.message.trim()) {
-      return data.detail.message;
+    rawBody = await response.clone().text();
+  } catch {
+    rawBody = "";
+  }
+  if (!rawBody.trim()) {
+    return fallbackPayload;
+  }
+
+  try {
+    const data = JSON.parse(rawBody) as {
+      error_code?: string;
+      message?: string;
+      details?: ApiErrorDetails;
+      detail?: string | { message?: string; error_code?: string; details?: ApiErrorDetails };
+      error?: string;
+    };
+    if (typeof data?.error_code === "string" && typeof data?.message === "string" && data.message.trim()) {
+      return { error_code: data.error_code, message: data.message, details: data.details ?? null };
+    }
+    if (typeof data?.detail === "string" && data.detail.trim()) {
+      return { error_code: inferErrorCodeFromMessage(response.status, data.detail), message: data.detail };
+    }
+    if (data?.detail && typeof data.detail === "object") {
+      const nested = data.detail as { message?: string; error_code?: string; details?: ApiErrorDetails };
+      const nestedMessage = typeof nested.message === "string" ? nested.message.trim() : "";
+      if (nestedMessage) {
+        return {
+          error_code: typeof nested.error_code === "string" ? nested.error_code : inferErrorCodeFromMessage(response.status, nestedMessage),
+          message: nestedMessage,
+          details: nested.details ?? null,
+        };
+      }
+    }
+    if (typeof data?.error === "string" && data.error.trim()) {
+      return { error_code: inferErrorCodeFromMessage(response.status, data.error), message: data.error };
+    }
+    if (typeof data?.message === "string" && data.message.trim()) {
+      return { error_code: inferErrorCodeFromMessage(response.status, data.message), message: data.message };
     }
   } catch {
     // continue
   }
 
-  try {
-    const text = await response.text();
-    if (text.trim()) return text.slice(0, 180);
-  } catch {
-    // ignore body parse errors
-  }
+  return {
+    error_code: inferErrorCodeFromMessage(response.status, rawBody),
+    message: rawBody.slice(0, 180),
+  };
+}
 
-  return detail;
+function inferErrorCodeFromStatus(status: number): string {
+  switch (status) {
+    case 401:
+      return "auth_required";
+    case 403:
+      return "forbidden";
+    case 404:
+      return "not_found";
+    case 409:
+      return "conflict";
+    case 422:
+      return "validation_error";
+    case 429:
+      return "rate_limited";
+    case 502:
+      return "imap_move_failed";
+    case 503:
+      return "setup_required";
+    case 504:
+      return "gateway_timeout";
+    default:
+      return "request_failed";
+  }
+}
+
+function inferErrorCodeFromMessage(status: number, message: string): string {
+  const lowered = message.toLowerCase();
+  if (status === 503 && lowered.includes("setup")) return "setup_required";
+  if (status === 401) return "auth_required";
+  if (lowered.includes("mailbox context is missing")) return "mailbox_context_missing";
+  if (lowered.includes("mailbox context") && lowered.includes("mismatch")) return "mailbox_context_mismatch";
+  if (lowered.includes("email not found")) return "email_not_found";
+  if (lowered.includes("imap folder") && lowered.includes("resolve")) return "imap_folder_resolution_failed";
+  if (lowered.includes("imap") && (lowered.includes("move") || lowered.includes("restore") || lowered.includes("spam"))) return "imap_move_failed";
+  if (lowered.includes("stale lock") || lowered.includes("background lock")) return "stale_lock_file";
+  if (lowered.includes("data_dir") || lowered.includes("data dir")) return "data_dir_unavailable";
+  if (lowered.includes("diagnostic")) return "diagnostics_unavailable";
+  return inferErrorCodeFromStatus(status);
 }

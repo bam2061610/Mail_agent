@@ -1,18 +1,20 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class HealthResponse(BaseModel):
     status: str
-    app_name: str
-    environment: str
-    server_time: datetime
+    setup_completed: bool
+    db: str
+    scheduler: str
 
 
 class ErrorResponse(BaseModel):
-    detail: str
+    error_code: str
+    message: str
+    details: dict[str, Any] | None = None
 
 
 class StatsResponse(BaseModel):
@@ -83,18 +85,21 @@ class SettingsResponse(BaseModel):
     smtp_use_ssl: bool
     deepseek_base_url: str
     deepseek_model: str
+    ai_analysis_enabled: bool
     interface_language: str
     summary_language: str
     scan_since_date: str | None
     signature: str
     auto_spam_enabled: bool
-    scan_interval_minutes: int
+    scheduler_interval_minutes: int
     followup_overdue_days: int
     catchup_absence_hours: int
     sent_review_batch_limit: int
+    max_emails_per_scan: int
     cors_origins: list[str]
     has_imap_password: bool
     has_smtp_password: bool
+    has_deepseek_api_key: bool
     has_openai_api_key: bool
 
 
@@ -114,18 +119,29 @@ class SettingsUpdateRequest(BaseModel):
     smtp_use_ssl: bool | None = None
     deepseek_base_url: str | None = None
     deepseek_model: str | None = None
+    deepseek_api_key: str | None = None
     interface_language: str | None = None
     summary_language: str | None = None
     scan_since_date: str | None = None
     signature: str | None = None
+    ai_analysis_enabled: bool | None = None
     auto_spam_enabled: bool | None = None
     ai_auto_spam_enabled: bool | None = None
     openai_api_key: str | None = None
-    scan_interval_minutes: int | None = None
+    scheduler_interval_minutes: int | None = None
     followup_overdue_days: int | None = None
     catchup_absence_hours: int | None = None
     sent_review_batch_limit: int | None = None
+    max_emails_per_scan: int | None = None
     cors_origins: list[str] | None = None
+
+    @model_validator(mode="after")
+    def normalize_aliases(self) -> "SettingsUpdateRequest":
+        if self.openai_api_key and not self.deepseek_api_key:
+            self.deepseek_api_key = self.openai_api_key
+        if self.ai_auto_spam_enabled is not None and self.auto_spam_enabled is None:
+            self.auto_spam_enabled = self.ai_auto_spam_enabled
+        return self
 
 
 class ManualScanResponse(BaseModel):
@@ -152,6 +168,27 @@ class PreferenceProfileResponse(BaseModel):
 
 class OperationStatusResponse(BaseModel):
     status: str = "ok"
+
+
+class SystemStatusResponse(BaseModel):
+    setup_completed: bool
+    startup_completed: bool
+    data_dir_exists: bool
+    data_dir_writable: bool
+    data_dir_path: str
+    background_lock_present: bool
+    background_lock_owned_by_current_process: bool
+    background_lock_status: str
+    background_lock_stale: bool
+    background_lock_diagnostic: str | None = None
+    background_lock_owner_pid: int | None = None
+    background_lock_owner_hostname: str | None = None
+    background_lock_owner_instance_id: str | None = None
+    scheduler_running: bool
+    watchers_running: bool
+    static_frontend_available: bool
+    diagnostics_timestamp: str
+    diagnostics_available: bool = True
 
 
 class AutomationRule(BaseModel):
@@ -291,6 +328,64 @@ class AuthLoginResponse(BaseModel):
 
 class AuthMeResponse(BaseModel):
     user: "UserResponse"
+
+
+class SetupStatusResponse(BaseModel):
+    completed: bool
+
+
+class SetupAiConfig(BaseModel):
+    deepseek_api_key: str
+    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
+
+
+class SetupMailboxConfig(BaseModel):
+    name: str | None = None
+    email_address: str
+    imap_host: str
+    imap_port: int = 993
+    imap_username: str | None = None
+    imap_password: str
+    smtp_host: str
+    smtp_port: int = 465
+    smtp_username: str | None = None
+    smtp_password: str
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = True
+    enabled: bool = True
+    is_default_outgoing: bool = True
+
+
+class SetupAdminAccount(BaseModel):
+    email: str
+    full_name: str | None = None
+    password: str
+    confirm_password: str
+
+    @model_validator(mode="after")
+    def ensure_passwords_match(self) -> "SetupAdminAccount":
+        if self.password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class SetupCompleteRequest(BaseModel):
+    admin: SetupAdminAccount
+    ai: SetupAiConfig
+    mailbox: SetupMailboxConfig
+    scheduler_interval_minutes: int = Field(default=5, ge=1)
+    followup_overdue_days: int = Field(default=3, ge=1)
+    max_emails_per_scan: int = Field(default=200, ge=1)
+    ai_analysis_enabled: bool = True
+
+
+class SetupTestAiRequest(SetupAiConfig):
+    pass
+
+
+class SetupTestMailboxRequest(SetupMailboxConfig):
+    pass
 
 
 class UserResponse(BaseModel):

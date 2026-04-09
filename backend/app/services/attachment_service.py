@@ -68,19 +68,20 @@ def save_attachments(
         return saved
 
     existing = db_session.query(Attachment).filter(Attachment.email_id == email_id).all()
-    existing_keys = {(item.filename or "", item.size_bytes, item.content_type or "") for item in existing}
+    existing_hashes = {_resolve_existing_content_hash(item) for item in existing if _resolve_existing_content_hash(item)}
     storage_dir = ATTACHMENTS_ROOT / _sanitize_component(mailbox_id or "default") / str(email_id)
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     for item in parsed_attachments:
-        key = (item.filename, item.size_bytes, item.content_type)
-        if key in existing_keys:
+        content_hash = hashlib.sha256(item.payload).hexdigest()
+        if content_hash in existing_hashes:
             continue
         storage_path = _persist_attachment_bytes(storage_dir, item)
         attachment = Attachment(
             email_id=email_id,
             filename=item.filename,
             content_type=item.content_type,
+            content_hash=content_hash,
             size_bytes=item.size_bytes,
             content_id=item.content_id,
             is_inline=item.is_inline,
@@ -104,6 +105,7 @@ def save_attachments(
             )
         )
         saved.append(attachment)
+        existing_hashes.add(content_hash)
     return saved
 
 
@@ -164,7 +166,7 @@ def build_content_disposition_header(filename: str) -> str:
 
 
 def _persist_attachment_bytes(storage_dir: Path, attachment: ParsedAttachment) -> Path:
-    digest = hashlib.sha1(attachment.payload).hexdigest()[:14]
+    digest = hashlib.sha256(attachment.payload).hexdigest()[:16]
     safe_name = _sanitize_filename(attachment.filename)
     target = storage_dir / f"{digest}_{safe_name}"
     if not target.exists():
@@ -176,7 +178,11 @@ def _delete_attachment_file(attachment: Attachment) -> None:
     try:
         file_path = Path(attachment.local_storage_path).resolve(strict=False)
     except Exception:  # noqa: BLE001
-        logger.warning("Skipping attachment file cleanup for attachment_id=%s due to invalid path", attachment.id)
+        logger.warning(
+            "Skipping attachment file cleanup for attachment_id=%s due to invalid path",
+            attachment.id,
+            exc_info=True,
+        )
         return
 
     root = ATTACHMENTS_ROOT.resolve(strict=False)
@@ -205,6 +211,7 @@ def _decode_filename(raw: str | None) -> str | None:
     try:
         decoded = collapse_rfc2231_value(raw).strip()
     except Exception:  # noqa: BLE001
+        logger.warning("Attachment filename decode failed", exc_info=True)
         decoded = raw.strip()
     return decoded or None
 
@@ -243,3 +250,19 @@ def _is_attachment_like(part: Message) -> bool:
     if disposition == "inline" and part.get("Content-ID"):
         return True
     return False
+
+
+def _resolve_existing_content_hash(attachment: Attachment) -> str | None:
+    if attachment.content_hash:
+        return attachment.content_hash
+    try:
+        path = Path(attachment.local_storage_path)
+        if path.exists() and path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        logger.warning(
+            "Failed to backfill attachment content hash: attachment_id=%s",
+            attachment.id,
+            exc_info=True,
+        )
+    return None
