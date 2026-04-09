@@ -173,6 +173,7 @@ def move_email(
             fresh_uid = _find_message_uid(connection, resolved_source_folder, raw_message_id)
             if fresh_uid and fresh_uid != resolved_uid:
                 logger.info("IMAP move retry with fresh uid=%r", fresh_uid)
+                _select_folder(connection, resolved_source_folder, readonly=False)
                 try:
                     target_uid_candidate = _try_move_or_copy(fresh_uid)
                     resolved_uid = fresh_uid

@@ -37,6 +37,7 @@ class FakeImapConnection:
         self.logged_out = False
         self._next_uid = 100
         self._deleted_uids: set[str] = set()
+        self._selected_readonly = False
         self.folders: dict[str, list[dict[str, object]]] = {
             "INBOX": [{"uid": source_uid, "message_id": source_message_id, "deleted": False}],
             "OMA": [],
@@ -60,6 +61,7 @@ class FakeImapConnection:
         if folder not in self.folders:
             return "NO", [b"missing"]
         self.selected_folder = folder
+        self._selected_readonly = readonly
         return "OK", [str(len([item for item in self.folders[folder] if not item.get("deleted")])).encode("utf-8")]
 
     def uid(self, command: str, *args):
@@ -98,6 +100,8 @@ class FakeImapConnection:
             self.move_calls.append((uid, target_folder))
             if self.fail_move:
                 return "NO", [b"move failed"]
+            if self._selected_readonly:
+                return "NO", [b"[READ-ONLY] move not allowed in read-only mode"]
             source_items = self.folders.get(self.selected_folder or "", [])
             source_item = next((item for item in source_items if str(item["uid"]) == uid and not item.get("deleted")), None)
             if source_item is None:
@@ -134,6 +138,8 @@ class FakeImapConnection:
             self.store_calls.append((uid, flags, value))
             if self.fail_store:
                 return "NO", [b"store failed"]
+            if self._selected_readonly:
+                return "NO", [b"[READ-ONLY] store not allowed in read-only mode"]
             source_items = self.folders.get(self.selected_folder or "", [])
             source_item = next((item for item in source_items if str(item["uid"]) == uid), None)
             if source_item is None:
@@ -283,6 +289,28 @@ def test_scoped_message_id_uses_raw_message_id_for_search(monkeypatch):
     )
 
     assert connection.search_log[0] == ("INBOX", "<raw@test>")
+
+
+def test_stale_uid_retry_reselects_folder_as_writable(monkeypatch):
+    """Regression: after _find_message_uid selects folder readonly, the retry must
+    re-select it writable before calling _try_move_or_copy (COPY+DELETE path)."""
+    connection = FakeImapConnection(supports_move=False, source_uid="88", source_message_id="<retry-write@test>")
+    # Add a stale uid that doesn't exist so the first attempt fails
+    monkeypatch.setattr(imap_folder_service, "connect_imap", lambda _mailbox: connection)
+
+    result = imap_folder_service.move_email(
+        _mailbox(),
+        "999",  # stale uid — not present in INBOX
+        "spam",
+        source_folder="INBOX",
+        message_id="<retry-write@test>",
+    )
+
+    assert result.status == "moved"
+    assert result.source_uid == "88"
+    # INBOX must be empty — message was deleted from source
+    assert connection.folders["INBOX"] == []
+    assert any(item["message_id"] == "<retry-write@test>" for item in connection.folders.get("OMA/Spam", []))
 
 
 def test_move_verification_fails_when_target_folder_is_empty(monkeypatch):
