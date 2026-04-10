@@ -183,7 +183,7 @@ def _scan_folder(
         return 0, 0, 0, 0, [f"Folder {folder} does not exist or is not accessible"]
 
     search_criterion = _imap_date_criterion(scan_cutoff)
-    status, data = connection.search(None, search_criterion)
+    status, data = connection.uid("search", None, search_criterion)
     if status != "OK":
         return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
 
@@ -571,7 +571,7 @@ def save_parsed_email(
 
 
 def _fetch_header_message_id(connection: imaplib.IMAP4_SSL, uid: bytes) -> str | None:
-    status, data = connection.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+    status, data = connection.uid("fetch", uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
     if status != "OK":
         return None
 
@@ -584,7 +584,7 @@ def _fetch_header_message_id(connection: imaplib.IMAP4_SSL, uid: bytes) -> str |
 
 
 def _fetch_full_message(connection: imaplib.IMAP4_SSL, uid: bytes) -> bytes:
-    status, data = connection.fetch(uid, "(BODY.PEEK[])")
+    status, data = connection.uid("fetch", uid, "(BODY.PEEK[])")
     if status != "OK":
         raise RuntimeError("Unable to fetch raw message")
 
