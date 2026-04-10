@@ -92,7 +92,22 @@ def move_email(
         )
 
         if resolved_target_folder is None:
-            raise RuntimeError("Target IMAP folder could not be resolved")
+            # Last-resort: try to create a folder with the canonical English name directly
+            suffix = TARGET_FOLDER_SUFFIXES.get(target_folder.strip().lower())
+            if suffix:
+                for candidate in [f"INBOX{state.separator}{suffix}", suffix]:
+                    created = _ensure_folder_exists(connection, {}, candidate)
+                    if created:
+                        resolved_target_folder = created
+                        logger.info("IMAP move: last-resort folder created: %r", created)
+                        break
+            if resolved_target_folder is None:
+                raise RuntimeError(
+                    f"Target IMAP folder for {target_folder!r} could not be resolved or created. "
+                    f"Folder state: spam={state.spam_folder!r} archive={state.archive_folder!r} "
+                    f"processed={state.processed_folder!r} reply_later={state.reply_later_folder!r} "
+                    f"root={state.root_folder!r}"
+                )
 
         if resolved_source_folder and resolved_target_folder and resolved_source_folder.lower() == resolved_target_folder.lower():
             if resolved_uid is None and raw_message_id:
@@ -132,7 +147,12 @@ def move_email(
             "MOVE" if _connection_supports_move(connection) else "COPY+DELETE",
             raw_message_id,
         )
-        _select_folder(connection, resolved_source_folder, readonly=False)
+        sel_status, _ = _select_folder(connection, resolved_source_folder, readonly=False)
+        if not _is_ok(sel_status):
+            raise RuntimeError(
+                f"Cannot open source IMAP folder {resolved_source_folder!r} for writing "
+                f"(SELECT returned {sel_status!r})"
+            )
 
         used_move_command = _connection_supports_move(connection)
         move_method = "MOVE" if used_move_command else "COPY+DELETE"
@@ -504,8 +524,14 @@ def _resolve_folder_hint(state: MailboxFolderState, folder_hint: str | None) -> 
         if actual.lower() == lowered:
             return actual
 
-    # Priority 5: return as-is (may already be a valid server folder name)
-    return normalized
+    # Priority 5: return as-is only when the hint is NOT a recognized keyword.
+    # A raw keyword that couldn't be resolved (e.g. "spam" when no Spam folder
+    # was found/created) must NOT be used as a folder name — return None so the
+    # caller can raise a clear error rather than silently failing with
+    # "NO NONEXISTENT" from the server.
+    if lowered not in attr_map and lowered not in TARGET_FOLDER_SUFFIXES:
+        return normalized
+    return None
 
 
 def _normalize_uid(value: str | bytes | None) -> str | None:
