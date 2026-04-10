@@ -8,7 +8,7 @@ import i18n from "./i18n";
 
 type RouteResponse = {
   status?: number;
-  body: unknown;
+  body?: unknown;
   throws?: Error;
 };
 
