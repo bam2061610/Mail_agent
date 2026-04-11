@@ -96,6 +96,8 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
 
     try:
         ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
         connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port, ssl_context=ssl_context)
         connection.login(imap_username, imap_password)
         return connection
