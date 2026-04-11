@@ -68,7 +68,10 @@
     "emailsCount": "e-posta",
     "waitDays": "{{count}}g bekleme",
     "attachments": "{{count}} ek",
-    "owner": "sahip #{{id}}"
+    "owner": "sahip #{{id}}",
+    "today": "Bugün",
+    "yesterday": "Dün",
+    "olderMessages": "Eski mesajlar"
   },
   "status": {
     "sent": "Gönderildi"

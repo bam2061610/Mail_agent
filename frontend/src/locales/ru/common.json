@@ -68,7 +68,10 @@
     "emailsCount": "писем",
     "waitDays": "{{count}}д ожидания",
     "attachments": "вложения {{count}}",
-    "owner": "владелец #{{id}}"
+    "owner": "владелец #{{id}}",
+    "today": "Сегодня",
+    "yesterday": "Вчера",
+    "olderMessages": "Старые сообщения"
   },
   "status": {
     "sent": "Отправлено"

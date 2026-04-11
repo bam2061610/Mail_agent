@@ -87,3 +87,11 @@ export function Undo2(props: LucideProps) {
     </IconBase>
   );
 }
+
+export function ChevronDown(props: LucideProps) {
+  return (
+    <IconBase {...props}>
+      <path d="m6 9 6 6 6-6" />
+    </IconBase>
+  );
+}

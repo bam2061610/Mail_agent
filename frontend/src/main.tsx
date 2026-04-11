@@ -862,7 +862,7 @@ export function App() {
             actionLoading={actionLoading}
           />
         ) : (
-          <section className={`mail-layout${selectedEmailId != null ? " detail-visible" : ""}`}>
+          <div className="mail-layout">
             <EmailList
               view={view}
               emails={emails}
@@ -880,44 +880,44 @@ export function App() {
               onReplyLaterEmail={(emailId) => void moveReplyLater(emailId)}
               onReplyWithAi={(emailId) => void openEmailModal(emailId, "reply", true)}
             />
-
-            <EmailDetail
-              open={selectedEmailId != null}
-              mode={modalMode || "read"}
-              selectedEmail={selectedEmail}
-              thread={thread}
-              attachments={attachments}
-              loading={loadingDetail}
-              actionLoading={mailActionLoading}
-              draftText={draftText}
-              replyLanguage={replyLanguage}
-              replyTo={replyTo}
-              replyCc={replyCc}
-              replyBcc={replyBcc}
-              replySubject={replySubject}
-              replyPrompt={replyPrompt}
-              replySignature={replySignature}
-              summaryLanguage={summaryLanguage}
-              onClose={closeModal}
-              onModeChange={(nextMode) => setModalMode(nextMode)}
-              onDraftChange={setDraftText}
-              onReplyToChange={setReplyTo}
-              onReplyCcChange={setReplyCc}
-              onReplyBccChange={setReplyBcc}
-              onReplySubjectChange={setReplySubject}
-              onReplyPromptChange={setReplyPrompt}
-              onReplySignatureChange={setReplySignature}
-              onReplyLanguageChange={setReplyLanguage}
-              onGenerateDraft={() => void generateDraft()}
-              onTranslateDraft={(lang) => void translateDraft(lang)}
-              onSendReply={() => void sendReply()}
-              onRegenerateSummary={() => void regenerateSummary()}
-              onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
-              onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
-              onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}
-            />
-          </section>
+          </div>
         )}
+
+        <EmailDetail
+          open={selectedEmailId != null && view !== "settings"}
+          mode={modalMode || "read"}
+          selectedEmail={selectedEmail}
+          thread={thread}
+          attachments={attachments}
+          loading={loadingDetail}
+          actionLoading={mailActionLoading}
+          draftText={draftText}
+          replyLanguage={replyLanguage}
+          replyTo={replyTo}
+          replyCc={replyCc}
+          replyBcc={replyBcc}
+          replySubject={replySubject}
+          replyPrompt={replyPrompt}
+          replySignature={replySignature}
+          summaryLanguage={summaryLanguage}
+          onClose={closeModal}
+          onModeChange={(nextMode) => setModalMode(nextMode)}
+          onDraftChange={setDraftText}
+          onReplyToChange={setReplyTo}
+          onReplyCcChange={setReplyCc}
+          onReplyBccChange={setReplyBcc}
+          onReplySubjectChange={setReplySubject}
+          onReplyPromptChange={setReplyPrompt}
+          onReplySignatureChange={setReplySignature}
+          onReplyLanguageChange={setReplyLanguage}
+          onGenerateDraft={() => void generateDraft()}
+          onTranslateDraft={(lang) => void translateDraft(lang)}
+          onSendReply={() => void sendReply()}
+          onRegenerateSummary={() => void regenerateSummary()}
+          onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
+          onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
+          onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}
+        />
       </main>
     </div>
   );

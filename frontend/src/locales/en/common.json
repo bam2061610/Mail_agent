@@ -68,7 +68,10 @@
     "emailsCount": "emails",
     "waitDays": "{{count}}d wait",
     "attachments": "attachments {{count}}",
-    "owner": "owner #{{id}}"
+    "owner": "owner #{{id}}",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "olderMessages": "Older messages"
   },
   "status": {
     "sent": "Sent"
