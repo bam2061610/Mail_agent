@@ -1,5 +1,15 @@
 # Deployment Guide
 
+## Canonical Deploy
+
+The single canonical deploy path uses the root `Dockerfile` and `docker-compose.yml`:
+
+```bash
+docker compose up --build
+```
+
+The `infra/` directory contains an alternative split-stack example (not canonical).
+
 ## Recommended Shape
 
 The simplest production deployment is now a single container that serves:

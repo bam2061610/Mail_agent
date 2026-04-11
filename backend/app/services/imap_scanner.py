@@ -19,7 +19,8 @@ from app.exceptions import ImapError
 from app.models.email import Email
 from app.models.action_log import ActionLog
 from app.db import open_account_session
-from app.services.attachment_service import ParsedAttachment, extract_attachments, save_attachments
+from app.services.attachment_service import ParsedAttachment, extract_attachments, save_attachments, save_attachment_metadata
+from app.services.followup_tracker import close_waiting
 from app.services.language_service import update_email_languages
 from app.services.mailbox_service import get_enabled_mailbox_configs
 from app.services.diagnostics_service import mark_mailbox_scan_result
@@ -95,8 +96,6 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
 
     try:
         ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
         connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port, ssl_context=ssl_context)
         connection.login(imap_username, imap_password)
         return connection
@@ -552,16 +551,22 @@ def save_parsed_email(
         )
     )
     apply_rules_to_email(db_session, email_record, source="import")
-    saved_attachments = save_attachments(
+    saved_attachments = save_attachment_metadata(
         db_session=db_session,
         email_id=email_record.id,
         mailbox_id=mailbox_id,
+        imap_uid=parsed_message.imap_uid,
         parsed_attachments=parsed_message.attachments,
     )
     if saved_attachments:
         email_record.has_attachments = True
         db_session.add(email_record)
     db_session.commit()
+    if parsed_message.direction == "inbound" and email_record.thread_id:
+        try:
+            close_waiting(db_session, thread_id=email_record.thread_id, reason="inbound_reply_received", actor="system")
+        except Exception:
+            logger.warning("Auto-close followup failed for thread %s", email_record.thread_id, exc_info=True)
     db_session.refresh(email_record)
     return SaveEmailResult(
         status="created",

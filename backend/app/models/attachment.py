@@ -20,5 +20,9 @@ class Attachment(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     content_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_inline: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    local_storage_path: Mapped[str] = mapped_column(Text, nullable=False)
+    local_storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    @property
+    def storage_mode(self) -> str:
+        return "local" if self.local_storage_path else "imap"

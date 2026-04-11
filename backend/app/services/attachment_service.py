@@ -30,13 +30,16 @@ class ParsedAttachment:
     content_id: str | None
     is_inline: bool
     payload: bytes
+    mime_part_number: str | None = None
 
 
 def extract_attachments(message: Message) -> list[ParsedAttachment]:
     attachments: list[ParsedAttachment] = []
+    part_counter = 0
     for part in message.walk():
         if part.get_content_maintype() == "multipart":
             continue
+        part_counter += 1
         if not _is_attachment_like(part):
             continue
         payload = part.get_payload(decode=True) or b""
@@ -52,11 +55,13 @@ def extract_attachments(message: Message) -> list[ParsedAttachment]:
                 content_id=content_id,
                 is_inline=disposition == "inline",
                 payload=payload,
+                mime_part_number=str(part_counter),
             )
         )
     return attachments
 
 
+# Deprecated: use save_attachment_metadata for new code
 def save_attachments(
     db_session: Session,
     email_id: int,
@@ -106,6 +111,47 @@ def save_attachments(
         )
         saved.append(attachment)
         existing_hashes.add(content_hash)
+    return saved
+
+
+def save_attachment_metadata(
+    db_session: Session,
+    email_id: int,
+    mailbox_id: str | None,
+    imap_uid: str | None,
+    parsed_attachments: list[ParsedAttachment],
+) -> list[Attachment]:
+    """Save attachment metadata without writing binary data to disk."""
+    saved: list[Attachment] = []
+    if not parsed_attachments:
+        return saved
+    for parsed in parsed_attachments:
+        content_hash = hashlib.sha256(parsed.payload).hexdigest() if parsed.payload else None
+        existing = (
+            db_session.query(Attachment)
+            .filter(Attachment.email_id == email_id, Attachment.content_hash == content_hash)
+            .first()
+            if content_hash
+            else None
+        )
+        if existing is not None:
+            saved.append(existing)
+            continue
+        record = Attachment(
+            email_id=email_id,
+            filename=parsed.filename,
+            content_type=parsed.content_type,
+            size_bytes=parsed.size_bytes,
+            content_id=parsed.content_id,
+            is_inline=parsed.is_inline,
+            content_hash=content_hash,
+            imap_uid=imap_uid,
+            imap_part_number=parsed.mime_part_number,
+            local_storage_path=None,
+        )
+        db_session.add(record)
+        saved.append(record)
+    db_session.flush()
     return saved
 
 
@@ -266,3 +312,71 @@ def _resolve_existing_content_hash(attachment: Attachment) -> str | None:
             exc_info=True,
         )
     return None
+
+
+def fetch_attachment_from_imap(
+    attachment: Attachment,
+    mailbox_config,
+    folder: str = "INBOX",
+) -> tuple[bytes, str, str]:
+    """Fetch attachment content from IMAP server.
+
+    Returns (bytes, filename, content_type).
+    Raises FileNotFoundError if attachment cannot be located.
+    """
+    from app.services.imap_scanner import connect_imap
+    from email import policy as email_policy
+    from email.parser import BytesParser
+
+    connection = None
+    try:
+        connection = connect_imap(mailbox_config)
+        status, _ = connection.select(folder, readonly=True)
+        if status != "OK":
+            raise FileNotFoundError(f"Could not select IMAP folder {folder}")
+
+        uid = attachment.imap_uid
+        if not uid:
+            raise FileNotFoundError("No IMAP UID available for this attachment")
+
+        if attachment.imap_part_number:
+            section = attachment.imap_part_number
+            status, data = connection.uid("FETCH", uid, f"(BODY.PEEK[{section}])")
+            if status == "OK" and data and data[0] and isinstance(data[0], tuple) and len(data[0]) > 1:
+                payload = data[0][1]
+                if isinstance(payload, bytes) and len(payload) > 0:
+                    return (
+                        payload,
+                        attachment.filename or "attachment",
+                        attachment.content_type or "application/octet-stream",
+                    )
+
+        status, data = connection.uid("FETCH", uid, "(BODY.PEEK[])")
+        if status != "OK" or not data or not data[0]:
+            raise FileNotFoundError(f"Could not fetch message uid={uid} from IMAP")
+
+        raw_bytes = data[0][1] if isinstance(data[0], tuple) else data[0]
+        if not isinstance(raw_bytes, bytes):
+            raise FileNotFoundError(f"Unexpected IMAP response for uid={uid}")
+
+        message = BytesParser(policy=email_policy.default).parsebytes(raw_bytes)
+        parsed = extract_attachments(message)
+
+        if attachment.content_hash:
+            for parsed_att in parsed:
+                att_hash = hashlib.sha256(parsed_att.payload).hexdigest()
+                if att_hash == attachment.content_hash:
+                    return parsed_att.payload, parsed_att.filename, parsed_att.content_type
+
+        if attachment.filename:
+            for parsed_att in parsed:
+                if parsed_att.filename == attachment.filename:
+                    return parsed_att.payload, parsed_att.filename, parsed_att.content_type
+
+        raise FileNotFoundError(f"Attachment '{attachment.filename}' not found in message uid={uid}")
+    finally:
+        if connection is not None:
+            try:
+                connection.logout()
+            except Exception:
+                pass

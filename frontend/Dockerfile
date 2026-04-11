@@ -1,4 +1,5 @@
-﻿FROM node:20-slim AS build
+# DEPRECATED: use root Dockerfile
+FROM node:20-slim AS build
 WORKDIR /app
 COPY package.json ./
 RUN npm install

@@ -174,8 +174,10 @@ def review_sent_email(
     }
     response_text = _call_model(
         system_prompt=(
-            "You are an outgoing email quality reviewer for Orhun Medical. "
-            "Review sent business emails for tone, completeness, clarity, and actionability. "
+            "You are reviewing outgoing emails sent BY Orhun Medical, a network of medical centers in Kazakhstan, TO external recipients. "
+            "Evaluate the quality of Orhun Medical's own outgoing communication. "
+            "Consider whether the email addresses all points from the preceding thread if thread history is provided. "
+            "Review for tone, completeness, clarity, and actionability. "
             "Respond in JSON only."
         ),
         user_payload=json.dumps(payload, ensure_ascii=False),

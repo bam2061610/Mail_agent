@@ -24,6 +24,7 @@ class EmailListItem(BaseModel):
     category: str | None = None
     ai_analyzed: bool
     requires_reply: bool
+    awaiting_response: bool = False
     is_spam: bool
     spam_source: str | None = None
     spam_reason: str | None = None
@@ -181,6 +182,8 @@ class DraftGenerationResponse(BaseModel):
 
 
 class AttachmentItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     email_id: int
     filename: str | None = None
@@ -188,6 +191,7 @@ class AttachmentItem(BaseModel):
     size_bytes: int
     content_id: str | None = None
     is_inline: bool = False
+    storage_mode: str = "imap"
     created_at: datetime
 
 

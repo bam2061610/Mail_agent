@@ -68,6 +68,13 @@ def test_imap_scanner_with_mocked_imap(db_session, monkeypatch):
         def search(self, *_args, **_kwargs):
             return "OK", [b"1"]
 
+        def uid(self, command, _uid, query):
+            if command.lower() == "search":
+                return "OK", [b"1"]
+            if command.lower() == "fetch":
+                return self.fetch(_uid, query)
+            return "NO", []
+
         def fetch(self, uid, query):
             raw_query = query.encode() if isinstance(query, str) else query
             if b"HEADER.FIELDS" in raw_query:

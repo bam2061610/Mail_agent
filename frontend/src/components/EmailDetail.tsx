@@ -219,6 +219,7 @@ export function EmailDetail(props: EmailDetailProps) {
             <iframe
               title={t("detail.originalMessage")}
               srcDoc={originalHtml}
+              sandbox=""
               className="original-message-frame"
               style={{ maxHeight: "400px", overflow: "auto", width: "100%", border: "1px solid var(--line)", height: "400px" }}
             />

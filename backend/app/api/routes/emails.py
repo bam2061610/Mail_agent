@@ -38,6 +38,7 @@ from app.services.ai_analyzer import generate_personalized_draft, regenerate_ema
 from app.services.deepseek_client import DeepSeekError, DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekTimeoutError
 from app.services.attachment_service import (
     build_attachment_download_payload,
+    fetch_attachment_from_imap,
     get_attachment,
     list_email_attachments,
 )
@@ -54,6 +55,7 @@ from app.services.imap_folder_service import move_email as move_email_on_server,
 from app.services.imap_scanner import extract_raw_message_id
 from app.services.mailbox_service import (
     SENT_DIRECTION_VALUES,
+    get_default_runtime_mailbox_from_settings,
     get_mailbox,
     get_outgoing_mailbox_for_email,
     get_thread_lookup_keys,
@@ -1027,25 +1029,39 @@ def download_attachment(
     attachment = get_attachment(db, attachment_id)
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    try:
-        file_path, _, media_type, headers = build_attachment_download_payload(attachment)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Attachment file missing")
-    db.add(
-        ActionLog(
-            user_id=current_user.id,
-            email_id=attachment.email_id,
-            action_type="attachment_downloaded",
-            actor=current_user.email,
-            details_json=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename}, ensure_ascii=False),
-        )
-    )
-    db.commit()
-    return FileResponse(
-        path=str(file_path),
-        media_type=media_type,
-        headers=headers,
-    )
+    if attachment.local_storage_path:
+        try:
+            file_path, _, media_type, headers = build_attachment_download_payload(attachment)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Attachment file missing")
+        db.add(ActionLog(user_id=current_user.id, email_id=attachment.email_id, action_type="attachment_downloaded", actor=current_user.email, details_json=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename}, ensure_ascii=False)))
+        db.commit()
+        return FileResponse(path=str(file_path), media_type=media_type, headers=headers)
+
+    if getattr(attachment, "imap_uid", None):
+        from fastapi.responses import Response
+        from urllib.parse import quote as url_quote
+
+        parent_email = db.query(Email).filter(Email.id == attachment.email_id).first()
+        if parent_email is None:
+            raise HTTPException(status_code=404, detail="Parent email not found")
+        mailbox_config = get_outgoing_mailbox_for_email(parent_email) or get_default_runtime_mailbox_from_settings()
+        if mailbox_config is None:
+            raise HTTPException(status_code=502, detail="No mailbox config for IMAP fetch")
+        folder = getattr(parent_email, "folder", None) or "INBOX"
+        try:
+            content, filename, content_type = fetch_attachment_from_imap(attachment, mailbox_config, folder)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:
+            logger.exception("IMAP attachment fetch failed id=%s", attachment.id)
+            raise HTTPException(status_code=502, detail="Failed to fetch attachment from mail server") from exc
+        db.add(ActionLog(user_id=current_user.id, email_id=attachment.email_id, action_type="attachment_downloaded", actor=current_user.email, details_json=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename, "source": "imap"}, ensure_ascii=False)))
+        db.commit()
+        safe_name = url_quote(filename or "attachment", safe="")
+        return Response(content=content, media_type=content_type, headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}"})
+
+    raise HTTPException(status_code=404, detail="Attachment file missing and no IMAP reference available")
 @router.post("/{email_id}/set-reply-language", response_model=EmailDetail, responses={404: {"model": ErrorResponse}})
 def set_reply_language(
     email_id: int,
