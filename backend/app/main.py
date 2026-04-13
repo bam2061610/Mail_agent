@@ -328,6 +328,13 @@ app.include_router(reports_router)
 app.include_router(users_router)
 
 
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 if FRONTEND_DIST_DIR.exists():
     assets_dir = FRONTEND_DIST_DIR / "assets"
     if assets_dir.exists():
@@ -335,7 +342,7 @@ if FRONTEND_DIST_DIR.exists():
 
     @app.get("/", include_in_schema=False)
     async def serve_frontend_root():
-        return FileResponse(FRONTEND_DIST_DIR / "index.html")
+        return FileResponse(FRONTEND_DIST_DIR / "index.html", headers=_NO_CACHE_HEADERS)
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend_app(full_path: str):
@@ -343,5 +350,8 @@ if FRONTEND_DIST_DIR.exists():
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         target = FRONTEND_DIST_DIR / full_path
         if full_path and target.exists() and target.is_file():
+            # Only the HTML entry point must bypass cache; hashed assets can be cached.
+            if target.name.endswith(".html"):
+                return FileResponse(target, headers=_NO_CACHE_HEADERS)
             return FileResponse(target)
-        return FileResponse(FRONTEND_DIST_DIR / "index.html")
+        return FileResponse(FRONTEND_DIST_DIR / "index.html", headers=_NO_CACHE_HEADERS)

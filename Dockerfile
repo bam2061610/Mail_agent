@@ -23,7 +23,8 @@ COPY backend/alembic ./alembic
 COPY backend/app ./app
 COPY --from=frontend-build /build/frontend/dist ./frontend_dist
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data \
+    && printf "build_time=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /app/BUILD_INFO
 
 EXPOSE 8000
 
