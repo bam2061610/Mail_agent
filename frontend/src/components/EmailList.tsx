@@ -56,7 +56,7 @@ function groupEmailsByDay(emails: EmailItem[], t: (key: string) => string): DayG
       continue;
     }
 
-    const date = new Date(dateStr);
+    const date = new Date(dateStr.includes("Z") || dateStr.includes("+") ? dateStr : dateStr + "Z");
     const emailDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
     if (emailDay < sevenDaysAgo) {
@@ -206,7 +206,7 @@ export function EmailList(props: EmailListProps) {
             <span>{summary}</span>
           </p>
           <div className="email-row-meta">
-            <span>{email.date_received ? new Date(email.date_received).toLocaleString() : t("queue.justNow")}</span>
+            <span>{email.date_received ? new Date(email.date_received.includes("Z") || email.date_received.includes("+") ? email.date_received : email.date_received + "Z").toLocaleString() : t("queue.justNow")}</span>
             <ImportanceBadge score={email.importance_score} label={t("detail.importance")} />
             {email.attachment_count ? <span>{t("queue.attachments", { count: email.attachment_count })}</span> : null}
           </div>
