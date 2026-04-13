@@ -340,6 +340,9 @@ export function App() {
         }
       } catch (error) {
         setAppError(getErrorMessage(error, autoGenerate ? "Could not generate draft." : "Could not load the selected email."));
+        setSelectedEmailId(null);
+        setSelectedEmail(null);
+        setModalMode(null);
       } finally {
         setLoadingDetail(false);
       }
