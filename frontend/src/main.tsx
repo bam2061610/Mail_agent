@@ -55,7 +55,7 @@ function normalizeDateInput(value?: string | null): string {
 function buildScanSinceDateIso(value: string): string | null {
   const raw = value.trim();
   if (!raw) return null;
-  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  const parsed = new Date(`${raw}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
 }
