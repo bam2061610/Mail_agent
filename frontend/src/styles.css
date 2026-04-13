@@ -1780,16 +1780,23 @@ textarea {
     width: 100%;
   }
 
+  /* Bottom-sheet modal on mobile: slide up from bottom, near full-height */
   .modal-overlay {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
     padding: 0;
-    align-items: flex-end;
   }
 
   .modal-card {
     width: 100%;
-    height: 96dvh;
-    max-height: 96dvh;
     border-radius: 20px 20px 0 0;
+    /* dvh = dynamic viewport height (accounts for browser chrome); vh as fallback */
+    height: 96vh;
+    height: 96dvh;
+    max-height: 96vh;
+    max-height: 96dvh;
   }
 
   .email-modal {
