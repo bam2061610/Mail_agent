@@ -235,15 +235,17 @@ SENT_FOLDER_NAMES = [
     "Sent", "INBOX.Sent", "Sent Messages", "Sent Items",
     "[Gmail]/Sent Mail", "[Gmail]/&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
     "INBOX.Sent Messages", "INBOX.Sent Items",
+    # Russian "Отправленные" in Modified UTF-7
+    "&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
 ]
 
 
-def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
-    """Try to locate the Sent folder by common names."""
+def _find_sent_folders(connection: imaplib.IMAP4_SSL) -> list[str]:
+    """Return all available sent-type folders on the server."""
     try:
         status, folder_list = connection.list()
         if status != "OK" or not folder_list:
-            return None
+            return []
         available: list[str] = []
         for entry in folder_list:
             if entry is None:
@@ -254,16 +256,32 @@ def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
                 folder_name = parts[-1].strip().strip('"')
                 available.append(folder_name)
 
+        found: list[str] = []
+        seen_lower: set[str] = set()
+
+        # First pass: exact matches against known names
         for candidate in SENT_FOLDER_NAMES:
             for avail in available:
-                if avail.lower() == candidate.lower():
-                    return avail
+                if avail.lower() == candidate.lower() and avail.lower() not in seen_lower:
+                    found.append(avail)
+                    seen_lower.add(avail.lower())
+
+        # Second pass: fuzzy match on folder names containing "sent"
         for avail in available:
-            if "sent" in avail.lower():
-                return avail
+            if "sent" in avail.lower() and avail.lower() not in seen_lower:
+                found.append(avail)
+                seen_lower.add(avail.lower())
+
+        return found
     except Exception:  # noqa: BLE001
         logger.warning("Optional sent-folder detection failed", exc_info=True)
-    return None
+    return []
+
+
+def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
+    """Return the first available sent folder (kept for backward compat)."""
+    folders = _find_sent_folders(connection)
+    return folders[0] if folders else None
 
 
 def scan_inbox(db_session: Session, settings) -> ScanSummary:
@@ -291,9 +309,10 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
         skipped_count += sk
         errors.extend(errs)
 
-        # Scan Sent folder (outbound)
-        sent_folder = _find_sent_folder(connection)
-        if sent_folder:
+        # Scan all Sent folders (outbound)
+        sent_folders = _find_sent_folders(connection)
+        logger.info("Found %d sent folder(s): %s", len(sent_folders), sent_folders)
+        for sent_folder in sent_folders:
             s, f, c, sk, errs = _scan_folder(
                 connection, db_session, sent_folder, str(mailbox_id),
                 mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="sent",
