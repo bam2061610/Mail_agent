@@ -20,6 +20,8 @@ class Attachment(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     content_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_inline: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    imap_uid: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    imap_part_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
     local_storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
