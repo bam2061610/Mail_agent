@@ -396,18 +396,22 @@ export function EmailDetail(props: EmailDetailProps) {
                   {originalMessageSection}
 
                   <div className="compose-actions">
-                    <button className="button button-ghost" type="button" onClick={props.onArchive}>
-                      <Archive size={16} aria-hidden="true" />
-                      {t("detail.archive")}
-                    </button>
-                    <button className="button button-ghost" type="button" onClick={props.onSpam}>
-                      <Ban size={16} aria-hidden="true" />
-                      {t("detail.markSpam")}
-                    </button>
-                    <button className="button button-ghost" type="button" onClick={props.onReplyLater}>
-                      <Clock size={16} aria-hidden="true" />
-                      {t("detail.later")}
-                    </button>
+                    {!isOutbound && (
+                      <>
+                        <button className="button button-ghost" type="button" onClick={props.onArchive}>
+                          <Archive size={16} aria-hidden="true" />
+                          {t("detail.archive")}
+                        </button>
+                        <button className="button button-ghost" type="button" onClick={props.onSpam}>
+                          <Ban size={16} aria-hidden="true" />
+                          {t("detail.markSpam")}
+                        </button>
+                        <button className="button button-ghost" type="button" onClick={props.onReplyLater}>
+                          <Clock size={16} aria-hidden="true" />
+                          {t("detail.later")}
+                        </button>
+                      </>
+                    )}
                     <button className="button button-primary" type="button" onClick={props.onSendReply} disabled={props.actionLoading === "reply"}>
                       {props.actionLoading === "reply" ? t("detail.sending") : t("detail.sendDraft")}
                     </button>
@@ -422,21 +426,25 @@ export function EmailDetail(props: EmailDetailProps) {
               <section className="detail-section-card read-preview-panel">
                 <div className="read-panel">
                   <div className="read-actions">
-                    <button className="button button-ghost" type="button" onClick={props.onArchive}>
-                      <Archive size={16} aria-hidden="true" />
-                      {t("detail.archive")}
-                    </button>
-                    <button className="button button-ghost" type="button" onClick={props.onSpam}>
-                      <Ban size={16} aria-hidden="true" />
-                      {t("detail.markSpam")}
-                    </button>
-                    <button className="button button-ghost" type="button" onClick={props.onReplyLater}>
-                      <Clock size={16} aria-hidden="true" />
-                      {t("detail.later")}
-                    </button>
-                    <button className="button button-primary modal-primary-action" type="button" onClick={() => props.onModeChange("reply")}>
-                      {t("detail.replyNow")}
-                    </button>
+                    {!isOutbound && (
+                      <>
+                        <button className="button button-ghost" type="button" onClick={props.onArchive}>
+                          <Archive size={16} aria-hidden="true" />
+                          {t("detail.archive")}
+                        </button>
+                        <button className="button button-ghost" type="button" onClick={props.onSpam}>
+                          <Ban size={16} aria-hidden="true" />
+                          {t("detail.markSpam")}
+                        </button>
+                        <button className="button button-ghost" type="button" onClick={props.onReplyLater}>
+                          <Clock size={16} aria-hidden="true" />
+                          {t("detail.later")}
+                        </button>
+                        <button className="button button-primary modal-primary-action" type="button" onClick={() => props.onModeChange("reply")}>
+                          {t("detail.replyNow")}
+                        </button>
+                      </>
+                    )}
                   </div>
                   <div className="read-preview">
                     <Field label={selected.ai_draft_reply ? t("detail.reply") : t("detail.aiSummary")} full hint={t("detail.replyHint")}>
