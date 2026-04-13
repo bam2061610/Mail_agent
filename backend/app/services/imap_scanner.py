@@ -109,7 +109,7 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
         raise ImapError(str(exc)) from exc
 
 
-MAX_INITIAL_SCAN_DAYS = 1
+MAX_INITIAL_SCAN_DAYS = 14
 
 
 def _parse_scan_since_date(raw_value) -> datetime | None:
@@ -139,7 +139,7 @@ def _resolve_scan_since_cutoff(settings) -> datetime:
     parsed = _parse_scan_since_date(raw_value)
     if parsed is not None:
         return parsed
-    return datetime.now(timezone.utc) - timedelta(hours=24)
+    return datetime.now(timezone.utc) - timedelta(days=MAX_INITIAL_SCAN_DAYS)
 
 
 def _imap_date_criterion(cutoff: datetime | None = None) -> str:
