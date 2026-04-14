@@ -123,6 +123,11 @@ export function EmailDetail(props: EmailDetailProps) {
     return createPortal(
       <div className="modal-overlay" role="presentation" onClick={handleOverlayClick}>
         <div className="modal-card email-modal" role="dialog" aria-modal="true" aria-label={t("detail.loading")}>
+          <div className="modal-header" style={{ justifyContent: "flex-end", borderBottom: "none", paddingBottom: 0 }}>
+            <button className="button button-ghost detail-close" type="button" onClick={props.onClose} aria-label={t("detail.closeModal")}>
+              ×
+            </button>
+          </div>
           <div className="modal-body modal-skeleton">
             <div className="skeleton skeleton-line skeleton-line-title" />
             <div className="skeleton skeleton-line skeleton-line-summary" />
@@ -142,6 +147,11 @@ export function EmailDetail(props: EmailDetailProps) {
     return createPortal(
       <div className="modal-overlay" role="presentation" onClick={handleOverlayClick}>
         <div className="modal-card email-modal" role="dialog" aria-modal="true">
+          <div className="modal-header" style={{ justifyContent: "flex-end", borderBottom: "none", paddingBottom: 0 }}>
+            <button className="button button-ghost detail-close" type="button" onClick={props.onClose} aria-label={t("detail.closeModal")}>
+              ×
+            </button>
+          </div>
           <div className="modal-body">
             <div className="empty-state">
               <strong>{t("detail.selectItem")}</strong>

@@ -188,10 +188,17 @@ def _scan_folder(
     if status != "OK":
         return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
 
-    message_uids = [uid for uid in data[0].split() if uid]
+    raw_uids = [uid for uid in data[0].split() if uid]
+    # Sort UIDs numerically so newest (highest UID) messages are last and
+    # the slice below always keeps the most recently delivered messages.
+    try:
+        raw_uids = sorted(raw_uids, key=lambda u: int(u))
+    except (ValueError, TypeError):
+        pass  # keep server order if UIDs are non-numeric
     max_emails_per_scan = max(1, int(getattr(get_effective_settings(), "max_emails_per_scan", 200) or 200))
-    if len(message_uids) > max_emails_per_scan:
-        message_uids = message_uids[-max_emails_per_scan:]
+    if len(raw_uids) > max_emails_per_scan:
+        raw_uids = raw_uids[-max_emails_per_scan:]
+    message_uids = raw_uids
     scanned_messages = len(message_uids)
 
     for uid in message_uids:
@@ -205,9 +212,11 @@ def _scan_folder(
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
             parsed_message.imap_uid = uid.decode("utf-8", errors="ignore") or None
-            if _is_older_than_cutoff(parsed_message.date_received, scan_cutoff):
-                skipped_count += 1
-                continue
+            # NOTE: We intentionally do NOT apply _is_older_than_cutoff here.
+            # IMAP SINCE already filters by the server's internal delivery date.
+            # The email Date header can differ from the delivery date by up to 24 h
+            # due to sender timezone offsets, and applying a strict cutoff on it
+            # would falsely skip recently delivered messages.
             if direction == "sent":
                 parsed_message.direction = "sent"
                 parsed_message.folder = folder.lower()
@@ -235,9 +244,34 @@ SENT_FOLDER_NAMES = [
     "Sent", "INBOX.Sent", "Sent Messages", "Sent Items",
     "[Gmail]/Sent Mail", "[Gmail]/&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
     "INBOX.Sent Messages", "INBOX.Sent Items",
-    # Russian "Отправленные" in Modified UTF-7
+    # Russian "Отправленные" in Modified UTF-7 (Yandex/Mail.ru/Dovecot)
     "&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
+    "INBOX.&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
+    # Cyrillic sent-folder keywords that some servers expose as UTF-8 names
+    "Отправленные", "INBOX.Отправленные",
 ]
+
+# Russian keywords (lowercase) to recognise sent folders decoded from Modified UTF-7
+_SENT_KEYWORDS_RU = ("отправ",)
+
+
+def _decode_modified_utf7(value: str) -> str:
+    """Best-effort decode of an IMAP Modified-UTF-7 folder name to a plain string.
+
+    Modified UTF-7 wraps non-ASCII runs in ``&...&-`` using base64-encoded
+    UTF-16BE, with ``,`` replacing ``/`` in the base64 alphabet.
+    Falls back to the original string on any error.
+    """
+    try:
+        # Replace &- (escaped literal &) with a placeholder, convert to standard
+        # UTF-7 by swapping & → + and , → /, then decode.
+        placeholder = "\x00"
+        tmp = value.replace("&-", placeholder)
+        tmp = tmp.replace("&", "+").replace(",", "/")
+        result = tmp.encode("ascii", errors="ignore").decode("utf-7", errors="ignore")
+        return result.replace(placeholder, "&")
+    except Exception:  # noqa: BLE001
+        return value
 
 
 def _find_sent_folders(connection: imaplib.IMAP4_SSL) -> list[str]:
@@ -266,9 +300,20 @@ def _find_sent_folders(connection: imaplib.IMAP4_SSL) -> list[str]:
                     found.append(avail)
                     seen_lower.add(avail.lower())
 
-        # Second pass: fuzzy match on folder names containing "sent"
+        # Second pass: fuzzy match on folder names containing "sent" (English)
         for avail in available:
             if "sent" in avail.lower() and avail.lower() not in seen_lower:
+                found.append(avail)
+                seen_lower.add(avail.lower())
+
+        # Third pass: decode Modified-UTF-7 names and check for Russian keywords.
+        # This catches servers that expose Cyrillic sent-folder names (e.g.
+        # "Отправленные") encoded in the IMAP Modified-UTF-7 scheme.
+        for avail in available:
+            if avail.lower() in seen_lower:
+                continue
+            human_name = _decode_modified_utf7(avail).lower()
+            if any(kw in human_name for kw in _SENT_KEYWORDS_RU):
                 found.append(avail)
                 seen_lower.add(avail.lower())
 

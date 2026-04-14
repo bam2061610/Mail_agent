@@ -332,13 +332,23 @@ export function App() {
       setModalMode(mode);
       setLoadingDetail(true);
       setAppError("");
+      // Failsafe: if the API doesn't respond in 15 s, close the loading modal
+      // so the user isn't stuck staring at a skeleton screen forever.
+      let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error(t("errors.loadTimeout") || "Request timed out. Please try again."));
+        }, 15000);
+      });
       try {
-        await reloadSelectedEmail(emailId);
+        await Promise.race([reloadSelectedEmail(emailId), timeoutPromise]);
+        window.clearTimeout(timeoutId);
         if (mode === "reply" && autoGenerate) {
           setAppSuccess("");
           await generateDraftForEmail(emailId, { targetLanguage: summaryLanguage, customPrompt: "", showSuccess: false });
         }
       } catch (error) {
+        window.clearTimeout(timeoutId);
         setAppError(getErrorMessage(error, autoGenerate ? "Could not generate draft." : "Could not load the selected email."));
         setSelectedEmailId(null);
         setSelectedEmail(null);
@@ -347,7 +357,7 @@ export function App() {
         setLoadingDetail(false);
       }
     },
-    [currentUser, generateDraftForEmail, reloadSelectedEmail, summaryLanguage]
+    [currentUser, generateDraftForEmail, reloadSelectedEmail, summaryLanguage, t]
   );
 
   useEffect(() => {
