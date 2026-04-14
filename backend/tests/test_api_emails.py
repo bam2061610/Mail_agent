@@ -10,6 +10,15 @@ from app.services.deepseek_client import DeepSeekRateLimitError, DeepSeekRespons
 from app.services.smtp_sender import SendReplyResult
 
 
+def _patch_mailbox_context(monkeypatch, emails_route, mailbox_config):
+    monkeypatch.setattr(
+        emails_route,
+        "get_mailbox",
+        lambda mailbox_id, redact_secrets=False: mailbox_config if str(mailbox_id) == str(mailbox_config.id) else None,
+    )
+    monkeypatch.setattr(emails_route, "to_runtime_mailbox", lambda mailbox: mailbox)
+
+
 def test_health_and_email_list(client, admin_auth_headers, sample_email):
     health = client.get("/health")
     assert health.status_code == 200
@@ -21,7 +30,19 @@ def test_health_and_email_list(client, admin_auth_headers, sample_email):
     assert matched["importance_score"] == sample_email.importance_score
 
 
-def test_get_email_detail(client, admin_auth_headers, sample_email):
+def test_get_email_detail(client, admin_auth_headers, sample_email, monkeypatch):
+    import app.api.routes.emails as emails_route
+
+    mailbox_config = SimpleNamespace(
+        id=sample_email.mailbox_id,
+        name="Default",
+        email_address="procurement@orhun.local",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user@example.com",
+        imap_password="secret",
+    )
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
     response = client.get(f"/api/emails/{sample_email.id}", headers=admin_auth_headers)
     assert response.status_code == 200
     assert response.json()["subject"] == sample_email.subject
@@ -44,14 +65,47 @@ def test_regenerate_summary_updates_ai_summary(client, admin_auth_headers, sampl
     assert sample_email.ai_summary == "Обновленная сводка."
 
 
-def test_update_email_status(client, admin_auth_headers, sample_email):
+def test_update_email_status(client, admin_auth_headers, sample_email, db_session, monkeypatch):
+    import app.api.routes.emails as emails_route
+
+    mailbox_config = SimpleNamespace(
+        id="mb-default",
+        name="Default",
+        email_address="procurement@orhun.local",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user@example.com",
+        imap_password="secret",
+    )
+
+    def fake_move(mailbox, imap_uid, target_folder, **kwargs):
+        assert mailbox == mailbox_config
+        assert kwargs.get("source_folder") == "inbox"
+        return SimpleNamespace(
+            status="moved",
+            source_uid=imap_uid,
+            target_uid="77",
+            source_folder="inbox",
+            target_folder="OMA/Archive",
+            used_move_command=True,
+        )
+
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
+    monkeypatch.setattr(emails_route, "move_email_on_server", fake_move)
+
     response = client.post(
         f"/api/emails/{sample_email.id}/status",
         headers=admin_auth_headers,
         json={"status": "archived"},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "archived"
+    payload = response.json()
+    assert payload["status"] == "archived"
+    assert payload["folder"] == "OMA/Archive"
+    db_session.refresh(sample_email)
+    assert sample_email.status == "archived"
+    assert sample_email.folder == "OMA/Archive"
+    assert sample_email.imap_uid == "77"
 
 
 def test_update_email_status_processed(client, admin_auth_headers, sample_email, db_session, monkeypatch):
@@ -81,7 +135,7 @@ def test_update_email_status_processed(client, admin_auth_headers, sample_email,
             used_move_command=True,
         )
 
-    monkeypatch.setattr(emails_route, "_resolve_runtime_mailbox_for_email", lambda _email: mailbox_config)
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
     monkeypatch.setattr(emails_route, "move_email_on_server", fake_move)
 
     response = client.post(
@@ -92,10 +146,10 @@ def test_update_email_status_processed(client, admin_auth_headers, sample_email,
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "processed"
-    assert payload["folder"] == "Processed"
+    assert payload["folder"] == "OMA/Processed"
     db_session.refresh(sample_email)
     assert sample_email.status == "processed"
-    assert sample_email.folder == "Processed"
+    assert sample_email.folder == "OMA/Processed"
     assert sample_email.imap_uid == "101"
     assert recorded["target_folder"] == "processed"
 
@@ -128,7 +182,7 @@ def test_update_email_status_moves_via_imap_when_configured(client, admin_auth_h
             used_move_command=True,
         )
 
-    monkeypatch.setattr(emails_route, "_resolve_runtime_mailbox_for_email", lambda _email: mailbox_config)
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
     monkeypatch.setattr(emails_route, "move_email_on_server", fake_move)
 
     response = client.post(
@@ -139,7 +193,7 @@ def test_update_email_status_moves_via_imap_when_configured(client, admin_auth_h
     assert response.status_code == 200
     db_session.refresh(sample_email)
     assert sample_email.status == "archived"
-    assert sample_email.folder == "Archive"
+    assert sample_email.folder == "OMA/Archive"
     assert sample_email.imap_uid == "88"
     assert recorded["target_folder"] == "archive"
     assert recorded["source_folder"] == "inbox"
@@ -157,7 +211,7 @@ def test_update_email_status_rolls_back_when_imap_move_fails(client, admin_auth_
         imap_password="secret",
     )
 
-    monkeypatch.setattr(emails_route, "_resolve_runtime_mailbox_for_email", lambda _email: mailbox_config)
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
     monkeypatch.setattr(emails_route, "move_email_on_server", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
 
     response = client.post(
@@ -166,6 +220,56 @@ def test_update_email_status_rolls_back_when_imap_move_fails(client, admin_auth_
         json={"status": "archived"},
     )
     assert response.status_code == 502
+    db_session.refresh(sample_email)
+    assert sample_email.status == "new"
+    assert sample_email.folder == "inbox"
+
+
+def test_update_email_status_returns_conflict_when_mailbox_missing(client, admin_auth_headers, sample_email, db_session, monkeypatch):
+    import app.api.routes.emails as emails_route
+
+    sample_email.mailbox_id = None
+    db_session.commit()
+
+    monkeypatch.setattr(emails_route, "move_email_on_server", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("move should not be called")))
+
+    response = client.post(
+        f"/api/emails/{sample_email.id}/status",
+        headers=admin_auth_headers,
+        json={"status": "archived"},
+    )
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "mailbox_context_missing"
+    db_session.refresh(sample_email)
+    assert sample_email.status == "new"
+    assert sample_email.folder == "inbox"
+
+
+def test_update_email_status_returns_conflict_when_mailbox_context_mismatches(client, admin_auth_headers, sample_email, db_session, monkeypatch):
+    import app.api.routes.emails as emails_route
+
+    mailbox_config = SimpleNamespace(
+        id="mb-default",
+        name="Default",
+        email_address="procurement@orhun.local",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user@example.com",
+        imap_password="secret",
+    )
+
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
+
+    response = client.post(
+        f"/api/emails/{sample_email.id}/status",
+        headers={**admin_auth_headers, "X-Mailbox-Id": "mb-other"},
+        json={"status": "archived"},
+    )
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["error_code"] == "mailbox_context_mismatch"
+    assert payload["details"]["requested_mailbox_id"] == "mb-other"
+    assert payload["details"]["email_mailbox_id"] == mailbox_config.id
     db_session.refresh(sample_email)
     assert sample_email.status == "new"
     assert sample_email.folder == "inbox"
@@ -203,7 +307,7 @@ def test_restore_spam_message_moves_to_inbox(client, admin_auth_headers, sample_
             used_move_command=True,
         )
 
-    monkeypatch.setattr(emails_route, "_resolve_runtime_mailbox_for_email", lambda _email: mailbox_config)
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
     monkeypatch.setattr(emails_route, "move_email_to_inbox", fake_move)
 
     response = client.post(
@@ -222,7 +326,65 @@ def test_restore_spam_message_moves_to_inbox(client, admin_auth_headers, sample_
     assert recorded["source_folder"] == "Spam"
 
 
-def test_reply_later_accepts_empty_body_and_updates_folder(client, admin_auth_headers, sample_email):
+def test_restore_spam_message_rolls_back_when_imap_move_fails(client, admin_auth_headers, sample_email, db_session, monkeypatch):
+    import app.api.routes.emails as emails_route
+
+    sample_email.status = "spam"
+    sample_email.is_spam = True
+    sample_email.folder = "Spam"
+    db_session.commit()
+
+    mailbox_config = SimpleNamespace(
+        id="mb-default",
+        name="Default",
+        email_address="procurement@orhun.local",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user@example.com",
+        imap_password="secret",
+    )
+
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
+    monkeypatch.setattr(emails_route, "move_email_to_inbox", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    response = client.post(
+        f"/api/emails/{sample_email.id}/restore",
+        headers=admin_auth_headers,
+    )
+    assert response.status_code == 502
+    db_session.refresh(sample_email)
+    assert sample_email.status == "spam"
+    assert sample_email.folder == "Spam"
+
+
+def test_reply_later_accepts_empty_body_and_updates_folder(client, admin_auth_headers, sample_email, db_session, monkeypatch):
+    import app.api.routes.emails as emails_route
+
+    mailbox_config = SimpleNamespace(
+        id="mb-default",
+        name="Default",
+        email_address="procurement@orhun.local",
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user@example.com",
+        imap_password="secret",
+    )
+
+    def fake_move(mailbox, imap_uid, target_folder, **kwargs):
+        assert mailbox == mailbox_config
+        assert target_folder == "reply_later"
+        return SimpleNamespace(
+            status="moved",
+            source_uid=imap_uid,
+            target_uid="132",
+            source_folder=kwargs.get("source_folder"),
+            target_folder="OMA/ReplyLater",
+            used_move_command=True,
+        )
+
+    _patch_mailbox_context(monkeypatch, emails_route, mailbox_config)
+    monkeypatch.setattr(emails_route, "move_email_on_server", fake_move)
+
     response = client.post(
         f"/api/emails/{sample_email.id}/reply-later",
         headers=admin_auth_headers,
@@ -231,7 +393,11 @@ def test_reply_later_accepts_empty_body_and_updates_folder(client, admin_auth_he
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "reply_later"
-    assert payload["folder"] == "Reply Later"
+    assert payload["folder"] == "OMA/ReplyLater"
+    db_session.refresh(sample_email)
+    assert sample_email.status == "reply_later"
+    assert sample_email.folder == "OMA/ReplyLater"
+    assert sample_email.imap_uid == "132"
 
 
 def test_reply_email_with_mocked_smtp(client, admin_auth_headers, admin_user, sample_email, db_session, monkeypatch):
@@ -305,7 +471,8 @@ def test_generate_draft_returns_controlled_ai_errors(client, admin_auth_headers,
         json={"target_language": "en"},
     )
     assert response.status_code == expected_status
-    assert expected_fragment in response.json().get("detail", "")
+    payload = response.json()
+    assert expected_fragment.lower() in payload["message"].lower()
 
 
 def test_reply_email_returns_specific_smtp_failure(client, admin_auth_headers, sample_email, monkeypatch):
@@ -318,7 +485,9 @@ def test_reply_email_returns_specific_smtp_failure(client, admin_auth_headers, s
         json={"body": "Thanks, received.", "save_as_sent_record": True},
     )
     assert response.status_code == 502
-    assert "SMTP delivery failed" in response.json().get("detail", "")
+    payload = response.json()
+    assert payload["error_code"] == "bad_gateway"
+    assert "SMTP delivery failed" in payload["message"]
 
 
 def test_rules_spam_and_mailboxes_endpoints(client, admin_auth_headers, sample_email):

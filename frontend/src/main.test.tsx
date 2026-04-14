@@ -8,7 +8,8 @@ import i18n from "./i18n";
 
 type RouteResponse = {
   status?: number;
-  body: unknown;
+  body?: unknown;
+  throws?: Error;
 };
 
 type MockCall = {
@@ -36,7 +37,7 @@ beforeEach(async () => {
   await i18n.changeLanguage("en");
 });
 
-function installFetchMock(routes: Record<string, RouteResponse>): MockCall[] {
+function installFetchMock(routes: Record<string, RouteResponse | RouteResponse[]>): MockCall[] {
   const calls: MockCall[] = [];
 
   vi.stubGlobal(
@@ -56,11 +57,25 @@ function installFetchMock(routes: Record<string, RouteResponse>): MockCall[] {
 
       const route = routes[`${method} ${path}`];
       if (!route) {
+        if (method === "GET" && path === "/api/setup/status") {
+          return new Response(JSON.stringify({ completed: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         throw new Error(`Unexpected fetch call: ${method} ${path}`);
       }
 
-      return new Response(JSON.stringify(route.body), {
-        status: route.status ?? 200,
+      const responseConfig = Array.isArray(route) ? (route.shift() ?? route[route.length - 1]) : route;
+      if (!responseConfig) {
+        throw new Error(`No remaining mocked responses for: ${method} ${path}`);
+      }
+      if (responseConfig.throws) {
+        throw responseConfig.throws;
+      }
+
+      return new Response(JSON.stringify(responseConfig.body), {
+        status: responseConfig.status ?? 200,
         headers: { "Content-Type": "application/json" },
       });
     })
@@ -93,13 +108,24 @@ function createSampleEmail(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createSettingsResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    signature: "Best regards,\nAdmin User",
+    summary_language: "en",
+    interface_language: "en",
+    auto_spam_enabled: true,
+    ...overrides,
+  };
+}
+
 function authenticatedRoutes(user = adminUser, emailOverrides: Record<string, unknown> = {}): Record<string, RouteResponse> {
   const sampleEmail = createSampleEmail(emailOverrides);
 
   return {
     "GET /api/auth/me": { body: { user } },
     "POST /api/auth/logout": { body: { status: "ok" } },
-    "GET /api/settings": { body: { signature: "Best regards,\nAdmin User", summary_language: "ru", interface_language: "ru", auto_spam_enabled: true } },
+    "GET /api/setup/status": { body: { completed: true } },
+    "GET /api/settings": { body: createSettingsResponse() },
     "GET /api/emails?limit=60&direction=inbound": { body: [sampleEmail] },
     "GET /api/emails/42": { body: { ...sampleEmail, thread_id: "thread-42", created_at: "2026-04-02T11:50:00Z", updated_at: "2026-04-02T12:00:00Z" } },
     "GET /api/emails/42/thread": {
@@ -121,7 +147,7 @@ function authenticatedRoutes(user = adminUser, emailOverrides: Record<string, un
     "POST /api/emails/42/status": { body: { status: "archived" } },
     "POST /api/emails/42/restore": { body: { status: "new" } },
     "POST /api/emails/42/confirm-spam": { body: { status: "spam" } },
-    "POST /api/settings": { body: { status: "ok", summary_language: "ru" } },
+    "POST /api/settings": { body: createSettingsResponse() },
     "GET /api/emails?limit=60&direction=sent": { body: [] },
     "GET /api/emails?limit=60&status=spam": { body: [] },
   };
@@ -143,7 +169,7 @@ it("logs in and renders the minimal inbox UI", async () => {
 
   expect(await screen.findByText("Supplier quotation request")).toBeInTheDocument();
   expect(document.querySelector(".sidebar-backdrop")).toBeNull();
-  expect(screen.getByText("Needs reply")).toBeInTheDocument();
+  expect(screen.getAllByText("Needs reply").length).toBeGreaterThan(0);
   expect(screen.getByLabelText("Importance: 9/10")).toBeInTheDocument();
   expect(screen.queryByText("Hello, please find quotation details attached.")).not.toBeInTheDocument();
   await user.click(screen.getByText("Supplier quotation request"));
@@ -152,10 +178,10 @@ it("logs in and renders the minimal inbox UI", async () => {
   expect(within(dialog).getByText("Summary")).toBeInTheDocument();
   expect(within(dialog).getByLabelText("Importance: 9/10")).toBeInTheDocument();
   expect(within(dialog).getByRole("button", { name: "Show original" })).toBeInTheDocument();
-  expect(within(dialog).queryByText("Hello, please find quotation details attached.")).not.toBeInTheDocument();
+  expect(dialog.querySelector(".original-message-text")).toBeNull();
   await user.click(within(dialog).getByRole("button", { name: "Show original" }));
   expect(within(dialog).getByRole("button", { name: "Hide original" })).toBeInTheDocument();
-  expect(within(dialog).getByText("Hello, please find quotation details attached.")).toBeInTheDocument();
+  expect(dialog.querySelector(".original-message-text")).toHaveTextContent("Hello, please find quotation details attached.");
   await user.click(within(dialog).getByRole("button", { name: "Close" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
@@ -169,7 +195,7 @@ it("keeps long summaries visible and clears transient overlay state across logou
   const user = userEvent.setup();
   render(<App />);
 
-  expect(screen.getByText("Use the account provisioned for your workspace.")).toBeInTheDocument();
+  expect(await screen.findByText("Use the account provisioned for your workspace.")).toBeInTheDocument();
   await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
   await user.type(screen.getByLabelText("Password"), "admin123");
   await user.click(screen.getByRole("button", { name: /sign in/i }));
@@ -228,7 +254,7 @@ it("opens the AI reply modal from a hover quick action", async () => {
 
 it("shows a visible error when login fails", async () => {
   installFetchMock({
-    "POST /api/auth/login": { status: 401, body: { detail: "Invalid credentials" } },
+    "POST /api/auth/login": { status: 401, body: { error_code: "auth_required", message: "Invalid credentials" } },
   });
 
   const user = userEvent.setup();
@@ -243,13 +269,61 @@ it("shows a visible error when login fails", async () => {
   expect(localStorage.getItem("oma_token")).toBeNull();
 });
 
+it("shows the setup wizard when the backend reports setup_required", async () => {
+  installFetchMock({
+    "GET /api/setup/status": { status: 503, body: { error_code: "setup_required", message: "Setup is required before this request can be processed" } },
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("Configure Mail Agent")).toBeInTheDocument();
+});
+
+it("keeps network failures separate from auth failures", async () => {
+  localStorage.setItem("oma_token", "token-from-storage");
+  installFetchMock({
+    "GET /api/setup/status": { body: { completed: true } },
+    "GET /api/auth/me": { throws: new TypeError("Failed to fetch") },
+  });
+
+  render(<App />);
+
+  expect(await screen.findByText("Mail login")).toBeInTheDocument();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Network error while reaching API");
+  expect(localStorage.getItem("oma_token")).toBe("token-from-storage");
+});
+
+it("renders mailbox-context errors without logging the user out", async () => {
+  installFetchMock({
+    "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
+    ...authenticatedRoutes(adminUser),
+    "POST /api/emails/42/status": { status: 409, body: { error_code: "mailbox_context_mismatch", message: "Mailbox context does not match the requested email" } },
+  });
+
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.type(await screen.findByLabelText("Email"), "admin@orhun.local");
+  await user.type(await screen.findByLabelText("Password"), "admin123");
+  await user.click(screen.getByRole("button", { name: /sign in/i }));
+  await screen.findByText("Supplier quotation request");
+
+  await user.click(screen.getByRole("button", { name: "Archive" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Mailbox context does not match the requested email");
+  expect(localStorage.getItem("oma_token")).toBe("token-123");
+});
+
 it("returns to login when auth bootstrap rejects an expired token and can recover with a fresh login", async () => {
   localStorage.setItem("oma_token", "expired-token");
   installFetchMock({
-    "GET /api/auth/me": { status: 401, body: { detail: "Invalid or expired token" } },
+    ...authenticatedRoutes(adminUser),
+    "GET /api/auth/me": [
+      { status: 401, body: { detail: "Invalid or expired token" } },
+      { body: { user: adminUser } },
+    ],
     "POST /api/auth/refresh": { status: 401, body: { detail: "Invalid or expired token" } },
     "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
-    ...authenticatedRoutes(adminUser),
   });
 
   const user = userEvent.setup();
@@ -275,8 +349,8 @@ it("switches between inbox and settings and toggles language", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
-  await user.type(screen.getByLabelText("Password"), "admin123");
+  await user.type(await screen.findByLabelText("Email"), "admin@orhun.local");
+  await user.type(await screen.findByLabelText("Password"), "admin123");
   await user.click(screen.getByRole("button", { name: /sign in/i }));
   await screen.findByText("Supplier quotation request");
 
@@ -310,9 +384,9 @@ it("offers summary generation for sent emails without analysis", async () => {
   };
 
   installFetchMock({
-    "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
+  "POST /api/auth/login": { body: { access_token: "token-123", token_type: "bearer", user: adminUser } },
     "GET /api/auth/me": { body: { user: adminUser } },
-    "GET /api/settings": { body: { signature: "Best regards,\nAdmin User", summary_language: "ru", interface_language: "ru", auto_spam_enabled: true } },
+    "GET /api/settings": { body: createSettingsResponse() },
     "GET /api/emails?limit=60&direction=inbound": { body: [] },
     "GET /api/emails?limit=60&direction=sent": { body: [sentEmail] },
     "GET /api/emails/99": { body: { ...sentEmail, thread_id: "thread-99", created_at: "2026-04-03T08:00:00Z", updated_at: "2026-04-03T08:00:00Z" } },
@@ -330,8 +404,8 @@ it("offers summary generation for sent emails without analysis", async () => {
   const user = userEvent.setup();
   render(<App />);
 
-  await user.type(screen.getByLabelText("Email"), "admin@orhun.local");
-  await user.type(screen.getByLabelText("Password"), "admin123");
+  await user.type(await screen.findByLabelText("Email"), "admin@orhun.local");
+  await user.type(await screen.findByLabelText("Password"), "admin123");
   await user.click(screen.getByRole("button", { name: /sign in/i }));
 
   await user.click(screen.getByRole("button", { name: "Sent" }));

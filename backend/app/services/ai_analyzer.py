@@ -1,7 +1,7 @@
 import json
 import logging
-import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from pydantic import BaseModel, ValidationError, field_validator, model_validator
@@ -20,7 +20,8 @@ from app.services.deepseek_client import (
 )
 from app.services.language_service import choose_reply_language, normalize_language, update_email_languages
 from app.services.imap_folder_service import move_email as move_email_on_server
-from app.services.mailbox_service import get_default_runtime_mailbox_from_settings, get_outgoing_mailbox_for_email
+from app.services.mailbox_service import get_default_runtime_mailbox_from_settings, get_outgoing_mailbox_for_email, is_outgoing_direction
+from app.services.followup_tracker import mark_thread_waiting
 from app.services.preference_profile import build_preference_prompt_block, get_preference_profile
 from app.services.rule_engine import apply_rules_to_email, is_trusted_sender
 from app.services.template_service import get_template, render_template_context
@@ -53,6 +54,7 @@ class AnalysisResult(BaseModel):
     confidence: float | None = None
     is_spam: bool = False
     spam_reason: str | None = None
+    awaiting_response: bool = False
 
     @field_validator("priority", mode="before")
     @classmethod
@@ -137,6 +139,19 @@ class AnalysisResult(BaseModel):
     @field_validator("is_spam", mode="before")
     @classmethod
     def normalize_is_spam(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "y"}:
+                return True
+            if normalized in {"false", "0", "no", "n"}:
+                return False
+        return bool(value)
+
+    @field_validator("awaiting_response", mode="before")
+    @classmethod
+    def normalize_awaiting_response(cls, value: object) -> bool:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -238,7 +253,10 @@ def build_system_prompt(config, preference_block: str | None = None, *, summary_
         "Also classify spam. Mark `is_spam` true for obvious spam, marketing blasts, phishing, "
         "mass promotional mailings with unsubscribe links, tracking pixels, or UTM parameters, "
         "promotional offers the user did not request, and phishing patterns. "
-        'Return `is_spam` as a JSON boolean and explain it in JSON field "spam_reason".'
+        'Return `is_spam` as a JSON boolean and explain it in JSON field "spam_reason". '
+        "For outgoing/sent emails: determine `awaiting_response` — whether Orhun Medical expects a reply from the recipient. "
+        "awaiting_response=true if the email contains a question, information request, meeting proposal, or confirmation request. "
+        "awaiting_response=false if it is an FYI notification, confirmation, or informational broadcast."
     )
     if preference_block:
         return f"{base_prompt}\n\n{preference_block}"
@@ -295,6 +313,7 @@ def build_user_payload(
             "draft_reply": "reply draft text or null",
             "is_spam": False,
             "spam_reason": "why the message is spam or null",
+            "awaiting_response": False,
         },
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -314,31 +333,23 @@ def analyze_email(
         interface_language=getattr(config, "interface_language", None),
         summary_language=summary_language or getattr(config, "summary_language", None),
     )
-    last_error: Exception | None = None
-
-    for attempt in range(1, max(1, config.ai_max_retries) + 1):
-        try:
-            response_text = _call_model_once(
-                system_prompt=system_prompt,
-                user_payload=user_payload,
-                config=config,
-            )
-            parsed_json = _extract_json_object(response_text)
-            return AnalysisResult.model_validate(parsed_json)
-        except (ValueError, ValidationError) as exc:
-            last_error = exc
-            logger.warning("AI analysis parse/validation failed on attempt %s: %s", attempt, exc)
-        except (DeepSeekTimeoutError, DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekError) as exc:
-            last_error = exc
-            logger.warning("AI analysis request failed on attempt %s: %s", attempt, exc)
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-            logger.warning("AI analysis request failed on attempt %s: %s", attempt, exc)
-
-        if attempt < max(1, config.ai_max_retries):
-            time.sleep(min(2 * attempt, 5))
-
-    raise RuntimeError(f"DeepSeek analysis failed after retries: {last_error}")
+    try:
+        response_text = _call_model_once(
+            system_prompt=system_prompt,
+            user_payload=user_payload,
+            config=config,
+        )
+        parsed_json = _extract_json_object(response_text)
+        return AnalysisResult.model_validate(parsed_json)
+    except (ValueError, ValidationError) as exc:
+        logger.warning("AI analysis parse/validation failed: %s", exc)
+        raise RuntimeError(f"DeepSeek analysis failed: {exc}") from exc
+    except (DeepSeekTimeoutError, DeepSeekRateLimitError, DeepSeekResponseError, DeepSeekError) as exc:
+        logger.warning("AI analysis request failed: %s", exc)
+        raise RuntimeError(f"DeepSeek analysis failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AI analysis request failed: %s", exc)
+        raise RuntimeError(f"DeepSeek analysis failed: {exc}") from exc
 
 
 def regenerate_email_summary(
@@ -465,7 +476,28 @@ def save_analysis_result(db_session: Session, email_record: Email, analysis_resu
     email_record.priority = analysis_result.priority
     email_record.importance_score = analysis_result.importance_score
     email_record.category = analysis_result.category
-    email_record.requires_reply = analysis_result.action_required
+    is_sent = is_outgoing_direction(email_record.direction)
+    email_record.requires_reply = False if is_sent else analysis_result.action_required
+    if is_sent:
+        email_record.awaiting_response = analysis_result.awaiting_response
+        if analysis_result.awaiting_response:
+            try:
+                _thread_id = email_record.thread_id or email_record.message_id
+                _started = email_record.date_received or datetime.now(timezone.utc)
+                _overdue_days = int(getattr(config, "followup_overdue_days", 3) or 3)
+                _expected_by = _started + timedelta(days=_overdue_days)
+                mark_thread_waiting(
+                    db_session,
+                    thread_id=_thread_id,
+                    email_id=email_record.id,
+                    started_at=_started,
+                    expected_reply_by=_expected_by,
+                    actor="ai_auto",
+                )
+            except Exception:
+                logger.warning("Auto-followup creation failed for email %s", email_record.id, exc_info=True)
+    else:
+        email_record.awaiting_response = False
     email_record.action_description = analysis_result.action_description
     email_record.key_dates_json = json.dumps(analysis_result.key_dates, ensure_ascii=False)
     email_record.key_amounts_json = json.dumps(analysis_result.key_amounts, ensure_ascii=False)
@@ -489,7 +521,7 @@ def save_analysis_result(db_session: Session, email_record: Email, analysis_resu
     apply_rules_to_email(db_session, email_record, source="ai")
     ai_marked_spam = analysis_result.is_spam or analysis_result.category == "Spam" or analysis_result.priority == "spam"
     auto_spam_enabled = _auto_spam_enabled(config)
-    if ai_marked_spam and auto_spam_enabled and not is_trusted_sender(email_record) and not email_record.is_spam:
+    if not is_sent and ai_marked_spam and auto_spam_enabled and not is_trusted_sender(email_record) and not email_record.is_spam:
         _mark_email_as_auto_spam(email_record, analysis_result)
     elif email_record.spam_source == "ai_auto" and not ai_marked_spam:
         email_record.is_spam = False
@@ -524,7 +556,6 @@ def _mark_email_as_auto_spam(email_record: Email, analysis_result: AnalysisResul
     email_record.status = "spam"
     email_record.spam_source = "ai_auto"
     email_record.spam_reason = analysis_result.spam_reason or f"AI classified as {analysis_result.category or analysis_result.priority}"
-    email_record.folder = "Spam"
 
     result = move_email_on_server(
         mailbox_config,
@@ -533,6 +564,7 @@ def _mark_email_as_auto_spam(email_record: Email, analysis_result: AnalysisResul
         source_folder=source_folder,
         message_id=email_record.message_id,
     )
+    email_record.folder = result.target_folder
     email_record.imap_uid = result.target_uid or result.source_uid or email_record.imap_uid
 
 

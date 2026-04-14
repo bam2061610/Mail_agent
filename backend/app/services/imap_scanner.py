@@ -1,6 +1,8 @@
 import hashlib
 import imaplib
 import json
+import ssl
+import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from email import policy
@@ -10,16 +12,21 @@ from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime, parseaddr
 
 from sqlalchemy.orm import Session
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import get_effective_settings
+from app.exceptions import ImapError
 from app.models.email import Email
 from app.models.action_log import ActionLog
 from app.db import open_account_session
-from app.services.attachment_service import ParsedAttachment, extract_attachments, save_attachments
+from app.services.attachment_service import ParsedAttachment, extract_attachments, save_attachments, save_attachment_metadata
+from app.services.followup_tracker import close_waiting
 from app.services.language_service import update_email_languages
 from app.services.mailbox_service import get_enabled_mailbox_configs
 from app.services.diagnostics_service import mark_mailbox_scan_result
 from app.services.rule_engine import apply_rules_to_email
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -75,18 +82,34 @@ class MultiMailboxScanSummary:
     errors: list[str]
 
 
+@retry(
+    retry=retry_if_exception_type(ImapError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    reraise=True,
+)
 def connect_imap(settings) -> imaplib.IMAP4_SSL:
     imap_username = getattr(settings, "imap_username", None) or getattr(settings, "imap_user", None)
     imap_password = getattr(settings, "imap_password", None)
     if not settings.imap_host or not imap_username or not imap_password:
-        raise ValueError("IMAP credentials are not fully configured")
+        raise ImapError("IMAP credentials are not fully configured")
 
-    connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port)
-    connection.login(imap_username, imap_password)
-    return connection
+    try:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port, ssl_context=ssl_context)
+        connection.login(imap_username, imap_password)
+        return connection
+    except imaplib.IMAP4.error as exc:
+        logger.warning("IMAP authentication failed", exc_info=True)
+        raise ImapError(str(exc)) from exc
+    except OSError as exc:
+        logger.warning("IMAP connection failed", exc_info=True)
+        raise ImapError(str(exc)) from exc
 
 
-MAX_INITIAL_SCAN_DAYS = 1
+MAX_INITIAL_SCAN_DAYS = 14
 
 
 def _parse_scan_since_date(raw_value) -> datetime | None:
@@ -116,7 +139,7 @@ def _resolve_scan_since_cutoff(settings) -> datetime:
     parsed = _parse_scan_since_date(raw_value)
     if parsed is not None:
         return parsed
-    return datetime.now(timezone.utc) - timedelta(hours=24)
+    return datetime.now(timezone.utc) - timedelta(days=MAX_INITIAL_SCAN_DAYS)
 
 
 def _imap_date_criterion(cutoff: datetime | None = None) -> str:
@@ -161,11 +184,21 @@ def _scan_folder(
         return 0, 0, 0, 0, [f"Folder {folder} does not exist or is not accessible"]
 
     search_criterion = _imap_date_criterion(scan_cutoff)
-    status, data = connection.search(None, search_criterion)
+    status, data = connection.uid("search", None, search_criterion)
     if status != "OK":
         return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
 
-    message_uids = [uid for uid in data[0].split() if uid]
+    raw_uids = [uid for uid in data[0].split() if uid]
+    # Sort UIDs numerically so newest (highest UID) messages are last and
+    # the slice below always keeps the most recently delivered messages.
+    try:
+        raw_uids = sorted(raw_uids, key=lambda u: int(u))
+    except (ValueError, TypeError):
+        pass  # keep server order if UIDs are non-numeric
+    max_emails_per_scan = max(1, int(getattr(get_effective_settings(), "max_emails_per_scan", 200) or 200))
+    if len(raw_uids) > max_emails_per_scan:
+        raw_uids = raw_uids[-max_emails_per_scan:]
+    message_uids = raw_uids
     scanned_messages = len(message_uids)
 
     for uid in message_uids:
@@ -179,9 +212,11 @@ def _scan_folder(
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
             parsed_message.imap_uid = uid.decode("utf-8", errors="ignore") or None
-            if _is_older_than_cutoff(parsed_message.date_received, scan_cutoff):
-                skipped_count += 1
-                continue
+            # NOTE: We intentionally do NOT apply _is_older_than_cutoff here.
+            # IMAP SINCE already filters by the server's internal delivery date.
+            # The email Date header can differ from the delivery date by up to 24 h
+            # due to sender timezone offsets, and applying a strict cutoff on it
+            # would falsely skip recently delivered messages.
             if direction == "sent":
                 parsed_message.direction = "sent"
                 parsed_message.folder = folder.lower()
@@ -199,6 +234,7 @@ def _scan_folder(
                 skipped_count += 1
         except Exception as exc:  # noqa: BLE001
             db_session.rollback()
+            logger.warning("IMAP folder scan failed: folder=%s", folder, exc_info=True)
             errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: {exc}")
 
     return scanned_messages, fetched_messages, created_count, skipped_count, errors
@@ -208,15 +244,42 @@ SENT_FOLDER_NAMES = [
     "Sent", "INBOX.Sent", "Sent Messages", "Sent Items",
     "[Gmail]/Sent Mail", "[Gmail]/&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
     "INBOX.Sent Messages", "INBOX.Sent Items",
+    # Russian "Отправленные" in Modified UTF-7 (Yandex/Mail.ru/Dovecot)
+    "&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
+    "INBOX.&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-",
+    # Cyrillic sent-folder keywords that some servers expose as UTF-8 names
+    "Отправленные", "INBOX.Отправленные",
 ]
 
+# Russian keywords (lowercase) to recognise sent folders decoded from Modified UTF-7
+_SENT_KEYWORDS_RU = ("отправ",)
 
-def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
-    """Try to locate the Sent folder by common names."""
+
+def _decode_modified_utf7(value: str) -> str:
+    """Best-effort decode of an IMAP Modified-UTF-7 folder name to a plain string.
+
+    Modified UTF-7 wraps non-ASCII runs in ``&...&-`` using base64-encoded
+    UTF-16BE, with ``,`` replacing ``/`` in the base64 alphabet.
+    Falls back to the original string on any error.
+    """
+    try:
+        # Replace &- (escaped literal &) with a placeholder, convert to standard
+        # UTF-7 by swapping & → + and , → /, then decode.
+        placeholder = "\x00"
+        tmp = value.replace("&-", placeholder)
+        tmp = tmp.replace("&", "+").replace(",", "/")
+        result = tmp.encode("ascii", errors="ignore").decode("utf-7", errors="ignore")
+        return result.replace(placeholder, "&")
+    except Exception:  # noqa: BLE001
+        return value
+
+
+def _find_sent_folders(connection: imaplib.IMAP4_SSL) -> list[str]:
+    """Return all available sent-type folders on the server."""
     try:
         status, folder_list = connection.list()
         if status != "OK" or not folder_list:
-            return None
+            return []
         available: list[str] = []
         for entry in folder_list:
             if entry is None:
@@ -227,16 +290,43 @@ def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
                 folder_name = parts[-1].strip().strip('"')
                 available.append(folder_name)
 
+        found: list[str] = []
+        seen_lower: set[str] = set()
+
+        # First pass: exact matches against known names
         for candidate in SENT_FOLDER_NAMES:
             for avail in available:
-                if avail.lower() == candidate.lower():
-                    return avail
+                if avail.lower() == candidate.lower() and avail.lower() not in seen_lower:
+                    found.append(avail)
+                    seen_lower.add(avail.lower())
+
+        # Second pass: fuzzy match on folder names containing "sent" (English)
         for avail in available:
-            if "sent" in avail.lower():
-                return avail
+            if "sent" in avail.lower() and avail.lower() not in seen_lower:
+                found.append(avail)
+                seen_lower.add(avail.lower())
+
+        # Third pass: decode Modified-UTF-7 names and check for Russian keywords.
+        # This catches servers that expose Cyrillic sent-folder names (e.g.
+        # "Отправленные") encoded in the IMAP Modified-UTF-7 scheme.
+        for avail in available:
+            if avail.lower() in seen_lower:
+                continue
+            human_name = _decode_modified_utf7(avail).lower()
+            if any(kw in human_name for kw in _SENT_KEYWORDS_RU):
+                found.append(avail)
+                seen_lower.add(avail.lower())
+
+        return found
     except Exception:  # noqa: BLE001
-        pass
-    return None
+        logger.warning("Optional sent-folder detection failed", exc_info=True)
+    return []
+
+
+def _find_sent_folder(connection: imaplib.IMAP4_SSL) -> str | None:
+    """Return the first available sent folder (kept for backward compat)."""
+    folders = _find_sent_folders(connection)
+    return folders[0] if folders else None
 
 
 def scan_inbox(db_session: Session, settings) -> ScanSummary:
@@ -264,9 +354,10 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
         skipped_count += sk
         errors.extend(errs)
 
-        # Scan Sent folder (outbound)
-        sent_folder = _find_sent_folder(connection)
-        if sent_folder:
+        # Scan all Sent folders (outbound)
+        sent_folders = _find_sent_folders(connection)
+        logger.info("Found %d sent folder(s): %s", len(sent_folders), sent_folders)
+        for sent_folder in sent_folders:
             s, f, c, sk, errs = _scan_folder(
                 connection, db_session, sent_folder, str(mailbox_id),
                 mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="sent",
@@ -526,16 +617,22 @@ def save_parsed_email(
         )
     )
     apply_rules_to_email(db_session, email_record, source="import")
-    saved_attachments = save_attachments(
+    saved_attachments = save_attachment_metadata(
         db_session=db_session,
         email_id=email_record.id,
         mailbox_id=mailbox_id,
+        imap_uid=parsed_message.imap_uid,
         parsed_attachments=parsed_message.attachments,
     )
     if saved_attachments:
         email_record.has_attachments = True
         db_session.add(email_record)
     db_session.commit()
+    if parsed_message.direction == "inbound" and email_record.thread_id:
+        try:
+            close_waiting(db_session, thread_id=email_record.thread_id, reason="inbound_reply_received", actor="system")
+        except Exception:
+            logger.warning("Auto-close followup failed for thread %s", email_record.thread_id, exc_info=True)
     db_session.refresh(email_record)
     return SaveEmailResult(
         status="created",
@@ -545,7 +642,7 @@ def save_parsed_email(
 
 
 def _fetch_header_message_id(connection: imaplib.IMAP4_SSL, uid: bytes) -> str | None:
-    status, data = connection.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+    status, data = connection.uid("fetch", uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
     if status != "OK":
         return None
 
@@ -558,7 +655,7 @@ def _fetch_header_message_id(connection: imaplib.IMAP4_SSL, uid: bytes) -> str |
 
 
 def _fetch_full_message(connection: imaplib.IMAP4_SSL, uid: bytes) -> bytes:
-    status, data = connection.fetch(uid, "(BODY.PEEK[])")
+    status, data = connection.uid("fetch", uid, "(BODY.PEEK[])")
     if status != "OK":
         raise RuntimeError("Unable to fetch raw message")
 
@@ -682,6 +779,21 @@ def _normalize_message_identifier(value: str | None) -> str | None:
             normalized = normalized[start : end + 1]
 
     return normalized
+
+
+def extract_raw_message_id(message_id: str | None) -> str | None:
+    """Return the RFC Message-ID part from a mailbox-scoped stored id.
+
+    Scanner storage may append ``::mailbox_id`` for deduplication across mailboxes.
+    IMAP SEARCH must always use the raw RFC Message-ID from the original message.
+    """
+    normalized = _normalize_message_identifier(message_id)
+    if not normalized:
+        return None
+    if "::" not in normalized:
+        return normalized
+    raw_message_id, _mailbox_id = normalized.rsplit("::", 1)
+    return _normalize_message_identifier(raw_message_id) or raw_message_id
 
 
 def _ensure_message_id(

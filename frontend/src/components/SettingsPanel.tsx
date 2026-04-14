@@ -10,6 +10,8 @@ type SettingsPanelProps = {
   onLanguageChange: (language: "ru" | "en" | "tr") => void;
   autoSpamEnabled: boolean;
   onAutoSpamChange: (value: boolean) => void;
+  followupOverdueDays: string;
+  onFollowupOverdueDaysChange: (value: string) => void;
   scanSinceDate: string;
   onScanSinceDateChange: (value: string) => void;
   signature: string;
@@ -79,6 +81,22 @@ export function SettingsPanel(props: SettingsPanelProps) {
             value={props.scanSinceDate}
             onChange={(event) => props.onScanSinceDateChange(event.target.value)}
           />
+        </div>
+      </div>
+      <div className="settings-card">
+        <div className="panel-copy">
+          <h3>Workflow</h3>
+          <p>Configure when waiting threads become overdue.</p>
+        </div>
+        <div className="settings-scan-form">
+          <Field label="Follow-up overdue days" full>
+            <input
+              value={props.followupOverdueDays}
+              onChange={(event) => props.onFollowupOverdueDaysChange(event.target.value)}
+              inputMode="numeric"
+              placeholder="3"
+            />
+          </Field>
         </div>
       </div>
       <div className="settings-card">

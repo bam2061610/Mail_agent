@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.models.session_token import SessionToken
 from app.models.user import User
 from app.services.auth_service import hash_password, validate_password_strength
 
@@ -99,6 +100,8 @@ def reset_user_password(db_session: Session, user: User, new_password: str) -> U
     user.password_hash = hash_password(new_password)
     user.updated_at = datetime.now(timezone.utc)
     db_session.add(user)
+    db_session.flush()
+    db_session.query(SessionToken).filter(SessionToken.user_id == user.id).delete(synchronize_session=False)
     db_session.commit()
     db_session.refresh(user)
     return user

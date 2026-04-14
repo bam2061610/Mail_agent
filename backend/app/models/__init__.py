@@ -3,9 +3,11 @@ from app.models.action_log import ActionLog
 from app.models.contact import Contact
 from app.models.email import Email
 from app.models.mailbox_account import MailboxAccount
+from app.models.rule import Rule
 from app.models.runtime_setting import RuntimeSetting
 from app.models.session_token import SessionToken
 from app.models.task import Task
+from app.models.template import Template
 from app.models.user import User
 
 __all__ = [
@@ -14,8 +16,10 @@ __all__ = [
     "Contact",
     "Email",
     "MailboxAccount",
+    "Rule",
     "RuntimeSetting",
     "SessionToken",
     "Task",
+    "Template",
     "User",
 ]

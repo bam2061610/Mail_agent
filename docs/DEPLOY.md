@@ -1,88 +1,102 @@
 # Deployment Guide
 
-## Runtime Topology
+## Canonical Deploy
 
-Recommended production split:
-
-1. `backend` serves the FastAPI API.
-2. `worker` runs scheduler jobs and IMAP watchers via `python -m app.worker`.
-3. Both services share the same `backend/data` volume.
-
-Environment flags:
-
-- API service: `RUN_BACKGROUND_JOBS=false`, `RUN_MAIL_WATCHERS=false`
-- Worker service: `RUN_BACKGROUND_JOBS=true`, `RUN_MAIL_WATCHERS=true`
-- Keep `BOOTSTRAP_DEFAULT_ADMIN=false` after initial provisioning. Enable it only for the very first admin bootstrap, then turn it off again.
-
-The app also keeps a process lock (`backend/data/background-services.lock`) so only one process owns background services at a time.
-Startup also serializes schema migrations with a dedicated lock before the API or worker begins normal work.
-
-## Schema Migrations
-
-- Startup runs database migrations automatically against the global SQLite DB and each mailbox account DB.
-- For controlled maintenance windows you can also run them manually:
+The single canonical deploy path uses the root `Dockerfile` and `docker-compose.yml`:
 
 ```bash
-cd backend
-python -m app.manage migrate
+docker compose up --build
 ```
 
-## Admin Operations: Backup and Recovery
+The `infra/` directory contains an alternative split-stack example (not canonical).
 
-The deployment includes built-in admin backup/restore endpoints.
+## Recommended Shape
 
-- Backups are stored at `backend/data/backups/`.
-- Each backup is a timestamped folder with:
-- Global SQLite DB snapshot.
-- Mailbox account DB snapshots from `backend/data/account_dbs/`.
-- Operational JSON stores (`settings.local.json`, `rules.json`, `templates.json`, `mailboxes.json`, etc.).
-- Optional attachments copy (`include_attachments=true`).
+The simplest production deployment is now a single container that serves:
 
-### Recommended baseline
+- the FastAPI API
+- the built React frontend
+- the background scheduler and mailbox watchers
 
-1. Keep at least `keep_last=10` backups.
-2. Run a backup before risky config/schema/manual maintenance changes.
-3. For restore, verify confirmation string and backup name carefully.
+Runtime configuration is setup-first. After the container starts, open the app in a browser and complete the first-run wizard.
 
-### Restore safety
+## Required Environment
 
-- Restore endpoint requires explicit confirmation format:
-- `RESTORE <backup_name>`.
-- System creates a safety backup before applying restore.
-- Restore actions are audited (`restore_started`, `restore_completed`, `restore_failed`).
+Keep the runtime `.env` minimal:
 
-## Admin Diagnostics
+```env
+SECRET_KEY=<random 32-byte hex string>
+DATABASE_URL=sqlite:///./data/mail_agent.db
+PORT=8000
+```
 
-Use admin diagnostics endpoints for production checks:
+Mailbox credentials, AI keys, scheduler intervals, and workflow settings are stored in the database after setup completes.
 
-- `GET /api/admin/health`
-- `GET /api/admin/diagnostics`
-- `GET /api/admin/jobs`
-- `GET /api/admin/mailboxes/status`
-- `GET /api/admin/backups/status`
+## Docker Compose
 
-These endpoints expose:
+From the repository root:
 
-- Scheduler running state and last job result.
-- Last scan/analyze success/failure timestamps.
-- Mailbox-level failure visibility.
-- Backup/restore last-run status.
-- Attachment/backups storage usage.
+```bash
+cp .env.example .env
+docker compose up --build -d
+```
 
-## Operational Tip
+The root `docker-compose.yml`:
 
-In small-team deployments, keep one admin account dedicated to weekly backup verification and periodic restore dry-runs on staging data.
+- builds the root multi-stage `Dockerfile`
+- persists SQLite data under `./data`
+- exposes the app on port `8000`
+- checks liveness through `GET /health`
 
-## v1.0 Release Gate
+## First Boot
 
-Before tagging `v1.0.0`, run from repository root:
+1. Open `http://localhost:8000`.
+2. Complete the setup wizard.
+3. Sign in with the admin account you just created.
+
+Until setup is complete:
+
+- `GET /api/setup/status` stays public
+- `POST /api/setup/complete` is allowed once
+- other API routes return `503 {"error":"setup_required"}`
+
+## Health Checks
+
+`GET /health` returns:
+
+```json
+{
+  "status": "ok",
+  "setup_completed": true,
+  "db": "ok",
+  "scheduler": "ok"
+}
+```
+
+Use this endpoint for Docker health checks, reverse proxies, or load balancers.
+
+## Backups and Recovery
+
+Admin backups include:
+
+- the global SQLite database
+- mailbox account databases
+- exported config snapshots such as the preference profile and digest state
+- optional attachments
+
+Restore still requires the exact confirmation string:
+
+```text
+RESTORE <backup_name>
+```
+
+## Validation
+
+Before shipping a build, run:
 
 ```bash
 python -m compileall backend/app
 pytest backend/tests -q
-cd frontend && npm test && npm run build
 ```
 
-CI gate (`.github/workflows/tests.yml`) mirrors these checks on push/PR.
-
-For final sign-off, complete `RELEASE_CHECKLIST.md` including manual UI smoke on target deployment environment.
+Frontend build validation is also recommended, but it requires a local Node.js toolchain or Docker build support.

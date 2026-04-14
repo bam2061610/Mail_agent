@@ -27,6 +27,7 @@ def test_worker_starts_and_stops_background_services(monkeypatch, tmp_path: Path
     monkeypatch.setattr(worker, "stop_scheduler", lambda scheduler: calls.append(f"stop_scheduler:{scheduler}"))
     monkeypatch.setattr(worker, "start_mail_watchers", lambda: calls.append("start_mail_watchers") or "watchers")
     monkeypatch.setattr(worker, "stop_mail_watchers", lambda manager: calls.append(f"stop_mail_watchers:{manager}"))
+    monkeypatch.setattr(worker, "is_setup_completed", lambda _db: True)
     monkeypatch.setattr(
         worker,
         "get_effective_settings",
@@ -55,6 +56,7 @@ def test_worker_exits_cleanly_when_lock_is_held(monkeypatch, tmp_path: Path):
         "acquire_process_lock",
         lambda _path: ProcessLock(path=tmp_path / "background-services.lock", handle=None, acquired=False),
     )
+    monkeypatch.setattr(worker, "is_setup_completed", lambda _db: True)
     monkeypatch.setattr(worker, "start_scheduler", lambda _config: calls.append("start_scheduler"))
     monkeypatch.setattr(worker, "start_mail_watchers", lambda: calls.append("start_mail_watchers"))
     monkeypatch.setattr(

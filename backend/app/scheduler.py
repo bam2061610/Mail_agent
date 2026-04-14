@@ -3,6 +3,7 @@ import os
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from collections.abc import Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -38,6 +39,14 @@ class ScheduledRunResult:
     skipped_count: int = 0
     failed_count: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+def run_job(job_name: str, func: Callable[[], object]) -> object | None:
+    try:
+        return func()
+    except Exception:
+        logger.error("Scheduler job '%s' failed", job_name, exc_info=True)
+        return None
 
 
 def run_scan_and_analyze() -> ScheduledRunResult:
@@ -180,6 +189,16 @@ def run_email_retention_cleanup() -> int:
 
 
 def _analyze_all_accounts(settings) -> ScheduledRunResult:
+    if not bool(getattr(settings, "ai_analysis_enabled", True)):
+        logger.info("Scheduled email analysis skipped because AI analysis is disabled")
+        return ScheduledRunResult(
+            imported_count=0,
+            analyzed_count=0,
+            skipped_count=0,
+            failed_count=0,
+            errors_count=0,
+            errors=[],
+        )
     total_analyzed = 0
     total_failed = 0
     total_skipped = 0
@@ -214,22 +233,22 @@ def create_scheduler(config) -> BackgroundScheduler:
         timezone="UTC",
     )
     scheduler.add_job(
-        run_scan_and_analyze,
+        lambda: run_job(SCHEDULER_JOB_ID, run_scan_and_analyze),
         trigger="interval",
-        minutes=max(1, int(config.scan_interval_minutes)),
+        minutes=max(1, int(getattr(config, "scheduler_interval_minutes", getattr(config, "scan_interval_minutes", 5)))),
         next_run_time=datetime.now(),
         id=SCHEDULER_JOB_ID,
         replace_existing=True,
     )
     scheduler.add_job(
-        run_session_token_cleanup,
+        lambda: run_job(SESSION_TOKEN_CLEANUP_JOB_ID, run_session_token_cleanup),
         trigger="interval",
         hours=1,
         id=SESSION_TOKEN_CLEANUP_JOB_ID,
         replace_existing=True,
     )
     scheduler.add_job(
-        run_email_retention_cleanup,
+        lambda: run_job(RETENTION_CLEANUP_JOB_ID, run_email_retention_cleanup),
         trigger="interval",
         hours=1,
         id=RETENTION_CLEANUP_JOB_ID,
@@ -257,7 +276,16 @@ def start_scheduler(app_or_config) -> BackgroundScheduler | None:
         mark_scheduler_started()
         logger.info(
             "Scheduler started with interval=%s minutes",
-            max(1, int(get_effective_settings().scan_interval_minutes)),
+            max(
+                1,
+                int(
+                    getattr(
+                        get_effective_settings(),
+                        "scheduler_interval_minutes",
+                        getattr(get_effective_settings(), "scan_interval_minutes", 5),
+                    )
+                ),
+            ),
         )
         return scheduler
 
@@ -266,7 +294,16 @@ def start_scheduler(app_or_config) -> BackgroundScheduler | None:
     mark_scheduler_started()
     logger.info(
         "Scheduler started with interval=%s minutes",
-        max(1, int(app_or_config.scan_interval_minutes)),
+        max(
+            1,
+            int(
+                getattr(
+                    app_or_config,
+                    "scheduler_interval_minutes",
+                    getattr(app_or_config, "scan_interval_minutes", 5),
+                )
+            ),
+        ),
     )
     return scheduler
 

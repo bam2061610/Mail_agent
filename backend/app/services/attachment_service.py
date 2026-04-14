@@ -30,13 +30,16 @@ class ParsedAttachment:
     content_id: str | None
     is_inline: bool
     payload: bytes
+    mime_part_number: str | None = None
 
 
 def extract_attachments(message: Message) -> list[ParsedAttachment]:
     attachments: list[ParsedAttachment] = []
+    part_counter = 0
     for part in message.walk():
         if part.get_content_maintype() == "multipart":
             continue
+        part_counter += 1
         if not _is_attachment_like(part):
             continue
         payload = part.get_payload(decode=True) or b""
@@ -52,11 +55,13 @@ def extract_attachments(message: Message) -> list[ParsedAttachment]:
                 content_id=content_id,
                 is_inline=disposition == "inline",
                 payload=payload,
+                mime_part_number=str(part_counter),
             )
         )
     return attachments
 
 
+# Deprecated: use save_attachment_metadata for new code
 def save_attachments(
     db_session: Session,
     email_id: int,
@@ -68,19 +73,20 @@ def save_attachments(
         return saved
 
     existing = db_session.query(Attachment).filter(Attachment.email_id == email_id).all()
-    existing_keys = {(item.filename or "", item.size_bytes, item.content_type or "") for item in existing}
+    existing_hashes = {_resolve_existing_content_hash(item) for item in existing if _resolve_existing_content_hash(item)}
     storage_dir = ATTACHMENTS_ROOT / _sanitize_component(mailbox_id or "default") / str(email_id)
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     for item in parsed_attachments:
-        key = (item.filename, item.size_bytes, item.content_type)
-        if key in existing_keys:
+        content_hash = hashlib.sha256(item.payload).hexdigest()
+        if content_hash in existing_hashes:
             continue
         storage_path = _persist_attachment_bytes(storage_dir, item)
         attachment = Attachment(
             email_id=email_id,
             filename=item.filename,
             content_type=item.content_type,
+            content_hash=content_hash,
             size_bytes=item.size_bytes,
             content_id=item.content_id,
             is_inline=item.is_inline,
@@ -104,6 +110,48 @@ def save_attachments(
             )
         )
         saved.append(attachment)
+        existing_hashes.add(content_hash)
+    return saved
+
+
+def save_attachment_metadata(
+    db_session: Session,
+    email_id: int,
+    mailbox_id: str | None,
+    imap_uid: str | None,
+    parsed_attachments: list[ParsedAttachment],
+) -> list[Attachment]:
+    """Save attachment metadata without writing binary data to disk."""
+    saved: list[Attachment] = []
+    if not parsed_attachments:
+        return saved
+    for parsed in parsed_attachments:
+        content_hash = hashlib.sha256(parsed.payload).hexdigest() if parsed.payload else None
+        existing = (
+            db_session.query(Attachment)
+            .filter(Attachment.email_id == email_id, Attachment.content_hash == content_hash)
+            .first()
+            if content_hash
+            else None
+        )
+        if existing is not None:
+            saved.append(existing)
+            continue
+        record = Attachment(
+            email_id=email_id,
+            filename=parsed.filename,
+            content_type=parsed.content_type,
+            size_bytes=parsed.size_bytes,
+            content_id=parsed.content_id,
+            is_inline=parsed.is_inline,
+            content_hash=content_hash,
+            imap_uid=imap_uid,
+            imap_part_number=parsed.mime_part_number,
+            local_storage_path=None,
+        )
+        db_session.add(record)
+        saved.append(record)
+    db_session.flush()
     return saved
 
 
@@ -164,7 +212,7 @@ def build_content_disposition_header(filename: str) -> str:
 
 
 def _persist_attachment_bytes(storage_dir: Path, attachment: ParsedAttachment) -> Path:
-    digest = hashlib.sha1(attachment.payload).hexdigest()[:14]
+    digest = hashlib.sha256(attachment.payload).hexdigest()[:16]
     safe_name = _sanitize_filename(attachment.filename)
     target = storage_dir / f"{digest}_{safe_name}"
     if not target.exists():
@@ -176,7 +224,11 @@ def _delete_attachment_file(attachment: Attachment) -> None:
     try:
         file_path = Path(attachment.local_storage_path).resolve(strict=False)
     except Exception:  # noqa: BLE001
-        logger.warning("Skipping attachment file cleanup for attachment_id=%s due to invalid path", attachment.id)
+        logger.warning(
+            "Skipping attachment file cleanup for attachment_id=%s due to invalid path",
+            attachment.id,
+            exc_info=True,
+        )
         return
 
     root = ATTACHMENTS_ROOT.resolve(strict=False)
@@ -205,6 +257,7 @@ def _decode_filename(raw: str | None) -> str | None:
     try:
         decoded = collapse_rfc2231_value(raw).strip()
     except Exception:  # noqa: BLE001
+        logger.warning("Attachment filename decode failed", exc_info=True)
         decoded = raw.strip()
     return decoded or None
 
@@ -243,3 +296,87 @@ def _is_attachment_like(part: Message) -> bool:
     if disposition == "inline" and part.get("Content-ID"):
         return True
     return False
+
+
+def _resolve_existing_content_hash(attachment: Attachment) -> str | None:
+    if attachment.content_hash:
+        return attachment.content_hash
+    try:
+        path = Path(attachment.local_storage_path)
+        if path.exists() and path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        logger.warning(
+            "Failed to backfill attachment content hash: attachment_id=%s",
+            attachment.id,
+            exc_info=True,
+        )
+    return None
+
+
+def fetch_attachment_from_imap(
+    attachment: Attachment,
+    mailbox_config,
+    folder: str = "INBOX",
+) -> tuple[bytes, str, str]:
+    """Fetch attachment content from IMAP server.
+
+    Returns (bytes, filename, content_type).
+    Raises FileNotFoundError if attachment cannot be located.
+    """
+    from app.services.imap_scanner import connect_imap
+    from email import policy as email_policy
+    from email.parser import BytesParser
+
+    connection = None
+    try:
+        connection = connect_imap(mailbox_config)
+        status, _ = connection.select(folder, readonly=True)
+        if status != "OK":
+            raise FileNotFoundError(f"Could not select IMAP folder {folder}")
+
+        uid = attachment.imap_uid
+        if not uid:
+            raise FileNotFoundError("No IMAP UID available for this attachment")
+
+        if attachment.imap_part_number:
+            section = attachment.imap_part_number
+            status, data = connection.uid("FETCH", uid, f"(BODY.PEEK[{section}])")
+            if status == "OK" and data and data[0] and isinstance(data[0], tuple) and len(data[0]) > 1:
+                payload = data[0][1]
+                if isinstance(payload, bytes) and len(payload) > 0:
+                    return (
+                        payload,
+                        attachment.filename or "attachment",
+                        attachment.content_type or "application/octet-stream",
+                    )
+
+        status, data = connection.uid("FETCH", uid, "(BODY.PEEK[])")
+        if status != "OK" or not data or not data[0]:
+            raise FileNotFoundError(f"Could not fetch message uid={uid} from IMAP")
+
+        raw_bytes = data[0][1] if isinstance(data[0], tuple) else data[0]
+        if not isinstance(raw_bytes, bytes):
+            raise FileNotFoundError(f"Unexpected IMAP response for uid={uid}")
+
+        message = BytesParser(policy=email_policy.default).parsebytes(raw_bytes)
+        parsed = extract_attachments(message)
+
+        if attachment.content_hash:
+            for parsed_att in parsed:
+                att_hash = hashlib.sha256(parsed_att.payload).hexdigest()
+                if att_hash == attachment.content_hash:
+                    return parsed_att.payload, parsed_att.filename, parsed_att.content_type
+
+        if attachment.filename:
+            for parsed_att in parsed:
+                if parsed_att.filename == attachment.filename:
+                    return parsed_att.payload, parsed_att.filename, parsed_att.content_type
+
+        raise FileNotFoundError(f"Attachment '{attachment.filename}' not found in message uid={uid}")
+    finally:
+        if connection is not None:
+            try:
+                connection.logout()
+            except Exception:
+                pass

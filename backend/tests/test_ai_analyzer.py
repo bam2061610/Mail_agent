@@ -202,7 +202,7 @@ def test_save_analysis_result_auto_spam_moves_message(db_session, monkeypatch):
     assert email.status == "spam"
     assert email.spam_source == "ai_auto"
     assert email.spam_reason == "Mass promo with tracking links"
-    assert email.folder == "Spam"
+    assert email.folder == "OMA/Spam"
     assert email.imap_uid == "991"
     assert recorded["target_folder"] == "spam"
     assert recorded["source_folder"] == "INBOX"

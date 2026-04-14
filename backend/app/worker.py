@@ -11,6 +11,7 @@ from app.core.process_lock import ProcessLock, acquire_process_lock, release_pro
 from app.db import create_tables
 from app.scheduler import start_scheduler, stop_scheduler
 from app.services.mail_watcher import start_mail_watchers, stop_mail_watchers
+from app.services.settings_service import is_setup_completed
 from app.services.user_service import ensure_default_admin
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,17 @@ def run_worker(
     create_tables()
     ensure_default_admin()
     runtime_settings = get_effective_settings()
+    from app.db import open_global_session
+
+    db = open_global_session()
+    try:
+        setup_completed = is_setup_completed(db)
+    finally:
+        db.close()
+
+    if not setup_completed:
+        logger.info("Worker startup skipped because setup is not complete")
+        return 0
 
     if not runtime_settings.run_background_jobs and not runtime_settings.run_mail_watchers:
         logger.info("Worker startup skipped because background jobs and mail watchers are disabled")

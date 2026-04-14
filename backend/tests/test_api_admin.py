@@ -90,7 +90,8 @@ def test_backup_restore_preserves_account_databases_and_preference_profile(isola
     dispose_database_engines()
     live_account_db.unlink()
     preference_profile_path = isolated_paths["data_dir"] / "preference_profile.json"
-    preference_profile_path.unlink()
+    if preference_profile_path.exists():
+        preference_profile_path.unlink()
 
     restore = restore_backup(
         backup_name=result.backup_name,

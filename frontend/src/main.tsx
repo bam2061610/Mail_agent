@@ -2,14 +2,26 @@ import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
-import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, getErrorMessage } from "./api";
+import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, getErrorMessage, isSetupRequiredError } from "./api";
 import { useAuth } from "./hooks/useAuth";
 import { LoginScreen } from "./components/LoginScreen";
+import { SetupWizard } from "./components/SetupWizard";
 import { Sidebar } from "./components/Sidebar";
 import { EmailList } from "./components/EmailList";
 import { EmailDetail } from "./components/EmailDetail";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { initialMailboxForm, type AttachmentItem, type DraftGenerationResponse, type EmailItem, type MailView, type MailboxFormState, type MailboxItem, type SettingsResponse, type ThreadResponse } from "./types";
+import {
+  initialMailboxForm,
+  type AttachmentItem,
+  type DraftGenerationResponse,
+  type EmailItem,
+  type MailView,
+  type MailboxFormState,
+  type MailboxItem,
+  type SettingsResponse,
+  type SetupStatusResponse,
+  type ThreadResponse,
+} from "./types";
 import "./styles.css";
 
 function splitRecipients(value: string): string[] {
@@ -43,7 +55,7 @@ function normalizeDateInput(value?: string | null): string {
 function buildScanSinceDateIso(value: string): string | null {
   const raw = value.trim();
   if (!raw) return null;
-  const parsed = new Date(`${raw}T00:00:00.000Z`);
+  const parsed = new Date(`${raw}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
 }
@@ -65,7 +77,9 @@ function buildReplyBody(draftText: string, signature: string, originalEmail: Ema
 
 export function App() {
   const { t } = useTranslation();
-  const { authLoading, currentUser, loginForm, setLoginForm, handleLogin, handleLogout, authError, authSuccess, actionLoading } = useAuth();
+  const [setupState, setSetupState] = useState<"loading" | "required" | "ready">("loading");
+  const [setupError, setSetupError] = useState("");
+  const { authLoading, currentUser, loginForm, setLoginForm, handleLogin, handleLogout, authError, authSuccess, actionLoading } = useAuth(setupState === "ready");
   const [view, setView] = useState<MailView>("inbox");
   const [emails, setEmails] = useState<EmailItem[]>([]);
   const [selectedEmailId, setSelectedEmailId] = useState<number | null>(null);
@@ -84,6 +98,7 @@ export function App() {
   const [settingsSignature, setSettingsSignature] = useState("");
   const [summaryLanguage, setSummaryLanguage] = useState<"ru" | "en" | "tr">("ru");
   const [autoSpamEnabled, setAutoSpamEnabled] = useState(true);
+  const [followupOverdueDays, setFollowupOverdueDays] = useState("3");
   const [scanSinceDate, setScanSinceDate] = useState("");
   const [savingSignature, setSavingSignature] = useState(false);
   const [mailboxes, setMailboxes] = useState<MailboxItem[]>([]);
@@ -99,6 +114,29 @@ export function App() {
   const [appSuccess, setAppSuccess] = useState("");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [modalMode, setModalMode] = useState<"read" | "reply" | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<SetupStatusResponse>("/api/setup/status")
+      .then((response) => {
+        if (cancelled) return;
+        setSetupState(response.completed ? "ready" : "required");
+        setSetupError("");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (isSetupRequiredError(error)) {
+          setSetupState("required");
+          setSetupError("");
+          return;
+        }
+        setSetupState("loading");
+        setSetupError(getErrorMessage(error, "Could not check setup status."));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!appError) return;
@@ -134,6 +172,7 @@ export function App() {
       setSettingsSignature("");
       setSummaryLanguage("ru");
       setAutoSpamEnabled(true);
+      setFollowupOverdueDays("3");
       setScanSinceDate("");
       setMailboxes([]);
       setMailboxesLoading(false);
@@ -155,12 +194,14 @@ export function App() {
         setSettingsSignature((settings.signature || "").trim());
         setSummaryLanguage(normalizeReplyLanguage(settings.summary_language || settings.interface_language || "ru"));
         setAutoSpamEnabled(settings.auto_spam_enabled ?? true);
+        setFollowupOverdueDays(String(settings.followup_overdue_days ?? 3));
         setScanSinceDate(normalizeDateInput(settings.scan_since_date));
       })
       .catch(() => {
         setSettingsSignature("");
         setSummaryLanguage("ru");
         setAutoSpamEnabled(true);
+        setFollowupOverdueDays("3");
         setScanSinceDate("");
       });
   }, [currentUser]);
@@ -291,19 +332,32 @@ export function App() {
       setModalMode(mode);
       setLoadingDetail(true);
       setAppError("");
+      // Failsafe: if the API doesn't respond in 15 s, close the loading modal
+      // so the user isn't stuck staring at a skeleton screen forever.
+      let timeoutId: ReturnType<typeof window.setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          reject(new Error(t("errors.loadTimeout") || "Request timed out. Please try again."));
+        }, 15000);
+      });
       try {
-        await reloadSelectedEmail(emailId);
+        await Promise.race([reloadSelectedEmail(emailId), timeoutPromise]);
+        window.clearTimeout(timeoutId);
         if (mode === "reply" && autoGenerate) {
           setAppSuccess("");
           await generateDraftForEmail(emailId, { targetLanguage: summaryLanguage, customPrompt: "", showSuccess: false });
         }
       } catch (error) {
+        window.clearTimeout(timeoutId);
         setAppError(getErrorMessage(error, autoGenerate ? "Could not generate draft." : "Could not load the selected email."));
+        setSelectedEmailId(null);
+        setSelectedEmail(null);
+        setModalMode(null);
       } finally {
         setLoadingDetail(false);
       }
     },
-    [currentUser, generateDraftForEmail, reloadSelectedEmail, summaryLanguage]
+    [currentUser, generateDraftForEmail, reloadSelectedEmail, summaryLanguage, t]
   );
 
   useEffect(() => {
@@ -586,6 +640,22 @@ export function App() {
     }
   }
 
+  async function saveFollowupOverdueDays(nextValue: string) {
+    const normalized = nextValue.replace(/[^\d]/g, "");
+    const previousValue = followupOverdueDays;
+    setAppError("");
+    setFollowupOverdueDays(normalized);
+    if (!normalized) return;
+    try {
+      await apiPost("/api/settings", {
+        followup_overdue_days: Number(normalized),
+      });
+    } catch (error) {
+      setFollowupOverdueDays(previousValue);
+      setAppError(getErrorMessage(error, "Could not save follow-up workflow setting."));
+    }
+  }
+
   function startMailboxEdit(mailbox: MailboxItem) {
     setEditingMailboxId(mailbox.id);
     setMailboxForm({
@@ -699,8 +769,12 @@ export function App() {
 
   const shellClass = `app-shell${mobileSidebarOpen ? " sidebar-open" : ""}`;
 
-  if (authLoading) {
-    return <div className="boot-state">{t("auth.checking")}</div>;
+  if (setupState === "loading" || (setupState === "ready" && authLoading)) {
+    return <div className="boot-state">{setupError || t("auth.checking")}</div>;
+  }
+
+  if (setupState === "required") {
+    return <SetupWizard onCompleted={() => setSetupState("ready")} />;
   }
 
   if (!currentUser) {
@@ -772,6 +846,10 @@ export function App() {
             onAutoSpamChange={(value) => {
               void saveAutoSpamEnabled(value);
             }}
+            followupOverdueDays={followupOverdueDays}
+            onFollowupOverdueDaysChange={(value) => {
+              void saveFollowupOverdueDays(value);
+            }}
             scanSinceDate={scanSinceDate}
             onScanSinceDateChange={(value) => {
               void saveScanSinceDate(value);
@@ -797,7 +875,7 @@ export function App() {
             actionLoading={actionLoading}
           />
         ) : (
-          <section className={`mail-layout${selectedEmailId != null ? " detail-visible" : ""}`}>
+          <div className="mail-layout">
             <EmailList
               view={view}
               emails={emails}
@@ -815,44 +893,44 @@ export function App() {
               onReplyLaterEmail={(emailId) => void moveReplyLater(emailId)}
               onReplyWithAi={(emailId) => void openEmailModal(emailId, "reply", true)}
             />
-
-            <EmailDetail
-              open={selectedEmailId != null}
-              mode={modalMode || "read"}
-              selectedEmail={selectedEmail}
-              thread={thread}
-              attachments={attachments}
-              loading={loadingDetail}
-              actionLoading={mailActionLoading}
-              draftText={draftText}
-              replyLanguage={replyLanguage}
-              replyTo={replyTo}
-              replyCc={replyCc}
-              replyBcc={replyBcc}
-              replySubject={replySubject}
-              replyPrompt={replyPrompt}
-              replySignature={replySignature}
-              summaryLanguage={summaryLanguage}
-              onClose={closeModal}
-              onModeChange={(nextMode) => setModalMode(nextMode)}
-              onDraftChange={setDraftText}
-              onReplyToChange={setReplyTo}
-              onReplyCcChange={setReplyCc}
-              onReplyBccChange={setReplyBcc}
-              onReplySubjectChange={setReplySubject}
-              onReplyPromptChange={setReplyPrompt}
-              onReplySignatureChange={setReplySignature}
-              onReplyLanguageChange={setReplyLanguage}
-              onGenerateDraft={() => void generateDraft()}
-              onTranslateDraft={(lang) => void translateDraft(lang)}
-              onSendReply={() => void sendReply()}
-              onRegenerateSummary={() => void regenerateSummary()}
-              onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
-              onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
-              onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}
-            />
-          </section>
+          </div>
         )}
+
+        <EmailDetail
+          open={selectedEmailId != null && view !== "settings"}
+          mode={modalMode || "read"}
+          selectedEmail={selectedEmail}
+          thread={thread}
+          attachments={attachments}
+          loading={loadingDetail}
+          actionLoading={mailActionLoading}
+          draftText={draftText}
+          replyLanguage={replyLanguage}
+          replyTo={replyTo}
+          replyCc={replyCc}
+          replyBcc={replyBcc}
+          replySubject={replySubject}
+          replyPrompt={replyPrompt}
+          replySignature={replySignature}
+          summaryLanguage={summaryLanguage}
+          onClose={closeModal}
+          onModeChange={(nextMode) => setModalMode(nextMode)}
+          onDraftChange={setDraftText}
+          onReplyToChange={setReplyTo}
+          onReplyCcChange={setReplyCc}
+          onReplyBccChange={setReplyBcc}
+          onReplySubjectChange={setReplySubject}
+          onReplyPromptChange={setReplyPrompt}
+          onReplySignatureChange={setReplySignature}
+          onReplyLanguageChange={setReplyLanguage}
+          onGenerateDraft={() => void generateDraft()}
+          onTranslateDraft={(lang) => void translateDraft(lang)}
+          onSendReply={() => void sendReply()}
+          onRegenerateSummary={() => void regenerateSummary()}
+          onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
+          onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
+          onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}
+        />
       </main>
     </div>
   );

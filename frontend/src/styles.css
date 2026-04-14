@@ -29,7 +29,7 @@
 html,
 body,
 #root {
-  min-height: 100%;
+  height: 100%;
 }
 
 body {
@@ -95,6 +95,13 @@ textarea {
   padding: 2rem;
 }
 
+.setup-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
 .auth-card {
   width: min(100%, 460px);
   background: var(--panel);
@@ -103,6 +110,103 @@ textarea {
   padding: 1.6rem;
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+}
+
+.setup-card {
+  width: min(100%, 980px);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 1.6rem;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  display: grid;
+  gap: 1.2rem;
+}
+
+.setup-header {
+  display: grid;
+  gap: 1rem;
+}
+
+.setup-header h1 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.setup-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.setup-step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.setup-step-chip.is-active {
+  border-color: rgba(10, 132, 255, 0.25);
+  background: rgba(10, 132, 255, 0.12);
+  color: var(--accent);
+}
+
+.setup-step-chip.is-complete {
+  border-color: rgba(21, 127, 59, 0.2);
+  background: rgba(21, 127, 59, 0.1);
+  color: var(--success);
+}
+
+.setup-step-grid,
+.setup-confirm-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.setup-field-stack {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.setup-inline-actions,
+.setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.setup-actions {
+  justify-content: space-between;
+}
+
+.setup-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1.25rem;
+}
+
+.setup-summary-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 1rem;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+}
+
+.setup-summary-card strong {
+  font-size: 1rem;
+}
+
+.setup-summary-card.is-wide {
+  grid-column: 1 / -1;
 }
 
 .auth-mark {
@@ -243,7 +347,8 @@ textarea {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 288px minmax(0, 1fr);
   gap: 1rem;
@@ -339,7 +444,10 @@ textarea {
 
 .app-content {
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 1rem;
 }
 
@@ -347,7 +455,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
   padding: 1rem 1.1rem;
   border-radius: var(--radius-lg);
   background: var(--panel);
@@ -407,19 +516,13 @@ textarea {
 }
 
 .mail-layout {
-  display: grid;
-  grid-template-columns: minmax(460px, 1.45fr) minmax(360px, 0.95fr);
-  gap: 1rem;
-  align-items: start;
-}
-
-.inbox-stage {
-  position: relative;
   min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .list-panel,
-.detail-panel,
 .settings-panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -428,13 +531,30 @@ textarea {
   backdrop-filter: blur(18px);
 }
 
-.list-panel,
-.detail-panel,
-.settings-panel {
-  padding: 1rem;
+.list-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
 }
 
-.list-toolbar,
+.settings-panel {
+  padding: 1rem;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.list-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 1rem;
+  border-bottom: 1px solid var(--soft);
+}
+
 .detail-header,
 .settings-card {
   display: flex;
@@ -451,10 +571,11 @@ textarea {
 }
 
 .list-filter-bar {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
-  margin-bottom: 1rem;
+  padding: 0.75rem 1rem 0;
 }
 
 .list-filter-button {
@@ -463,8 +584,100 @@ textarea {
 }
 
 .email-list {
-  display: grid;
-  gap: 0.75rem;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0.75rem 1rem 1rem;
+}
+
+/* Day grouping */
+.day-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.day-group:last-child {
+  margin-bottom: 0;
+}
+
+.day-separator {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.35rem 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  flex-shrink: 0;
+  position: sticky;
+  top: -0.75rem;
+  z-index: 2;
+  background: var(--bg);
+}
+
+.day-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--soft);
+}
+
+.day-separator-toggle {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.35rem 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  cursor: pointer;
+  width: 100%;
+  flex-shrink: 0;
+  border-radius: 8px;
+}
+
+.day-separator-toggle:hover {
+  color: var(--text);
+}
+
+.day-separator-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--soft);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.day-separator-line {
+  flex: 1;
+  height: 1px;
+  background: var(--soft);
+}
+
+.day-separator-chevron {
+  font-style: normal;
+  font-size: 0.65rem;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+
+.day-separator-chevron.is-open {
+  transform: rotate(180deg);
 }
 
 .email-row {
@@ -816,12 +1029,14 @@ textarea {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 200;
   display: grid;
   place-items: center;
   padding: 1.25rem;
-  background: rgba(14, 19, 29, 0.34);
-  backdrop-filter: blur(10px);
+  background: rgba(14, 19, 29, 0.42);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  overscroll-behavior: contain;
 }
 
 .modal-card {
@@ -904,7 +1119,7 @@ textarea {
 
 .modal-columns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.95fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr);
   gap: 1rem;
   min-height: 0;
 }
@@ -1080,6 +1295,12 @@ textarea {
   border-radius: 999px;
 }
 
+.email-skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .skeleton-row {
   pointer-events: none;
 }
@@ -1195,6 +1416,11 @@ textarea {
   font-size: 0.85rem;
 }
 
+.field-error {
+  color: var(--danger);
+  font-size: 0.84rem;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1275,6 +1501,10 @@ textarea {
   gap: 0.75rem;
 }
 
+@media (max-width: 1280px) {
+  /* detail is now always a modal, no side-panel hiding needed */
+}
+
 @media (max-width: 1100px) {
   .settings-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1313,7 +1543,7 @@ textarea {
 .settings-mailbox-stack {
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
   gap: 1rem;
   align-items: start;
 }
@@ -1428,6 +1658,7 @@ textarea {
   font-size: 1.3rem;
   line-height: 1;
   padding-inline: 0.75rem;
+  display: inline-flex;
 }
 
 .empty-state {
@@ -1508,28 +1739,17 @@ textarea {
     align-items: stretch;
   }
 
-  .mail-layout {
-    grid-template-columns: 1fr;
+  .list-toolbar {
+    gap: 0.75rem;
   }
 
-  .mail-layout.detail-visible .list-panel {
-    display: none;
-  }
-
-  .mail-layout:not(.detail-visible) .detail-panel {
-    display: none;
-  }
-
-  .mobile-back {
-    display: inline-flex;
-  }
-
-  .detail-close {
-    display: none;
+  .search {
+    width: 100%;
   }
 
   .summary-grid,
-  .settings-grid {
+  .settings-grid,
+  .setup-confirm-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1560,13 +1780,27 @@ textarea {
     width: 100%;
   }
 
+  /* Bottom-sheet modal on mobile: slide up from bottom, near full-height */
   .modal-overlay {
-    padding: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
+    padding: 0;
   }
 
   .modal-card {
-    max-height: calc(100vh - 1.2rem);
-    border-radius: 20px;
+    width: 100%;
+    border-radius: 20px 20px 0 0;
+    /* dvh = dynamic viewport height (accounts for browser chrome); vh as fallback */
+    height: 96vh;
+    height: 96dvh;
+    max-height: 96vh;
+    max-height: 96dvh;
+  }
+
+  .email-modal {
+    width: 100%;
   }
 
   .modal-header,
@@ -1594,7 +1828,7 @@ textarea {
   .modal-header-actions .button,
   .compose-actions .button,
   .read-actions .button {
-    flex: 1 1 140px;
+    flex: 1 1 120px;
   }
 
   .modal-mode-toggle,
@@ -1629,5 +1863,95 @@ textarea {
 
   .quick-action::after {
     display: none;
+  }
+}
+
+/* ─── Phone-size layout overrides (≤ 640 px) ───────────────────────────────
+   At the 980 px breakpoint the topbar and list-toolbar become column-flex,
+   which on a phone consumes roughly half the viewport before a single email
+   is visible. This block restores a compact single-row layout for both. */
+@media (max-width: 640px) {
+  /* Topbar: single compact row instead of two stacked rows */
+  .topbar {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    padding: 0.55rem 0.75rem;
+    gap: 0.45rem;
+  }
+
+  .topbar-left {
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 0.45rem;
+  }
+
+  /* "WORKSPACE" eyebrow is not needed on a small phone */
+  .topbar .eyebrow {
+    display: none;
+  }
+
+  .topbar h2 {
+    font-size: 1rem;
+    margin: 0;
+  }
+
+  .topbar-actions {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+    gap: 0.35rem;
+  }
+
+  /* Shorter user chip so it fits on one row */
+  .user-chip {
+    max-width: 80px;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.45rem;
+  }
+
+  /* List toolbar: single row (title left, search right) */
+  .list-toolbar {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    padding: 0.55rem 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .list-toolbar > *:first-child {
+    flex-shrink: 0;
+  }
+
+  /* Search takes remaining width */
+  .search {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* Tighten the email list padding */
+  .email-list {
+    padding: 0.5rem 0.75rem 0.75rem;
+  }
+
+  /* Filter bar: smaller pills */
+  .list-filter-bar {
+    padding: 0.45rem 0.75rem 0;
+    gap: 0.35rem;
+  }
+
+  .list-filter-button {
+    min-height: 32px;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  /* Email row actions: icon-only (hide text labels) on very small phones */
+  .icon-action-label {
+    display: none;
+  }
+
+  .icon-action {
+    padding: 0.4rem 0.55rem;
   }
 }

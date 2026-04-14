@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import get_effective_settings
 from app.db import get_db
 from app.models.email import Email
 from app.models.user import User
@@ -82,7 +83,7 @@ def get_catchup_digest(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("view_digest")),
 ) -> CatchupDigestResponse:
-    digest = generate_catchup_digest(db, get_effective_settings())
+    digest = generate_catchup_digest(db, get_effective_settings(), current_user.id)
     return CatchupDigestResponse(
         generated_at=digest.generated_at.isoformat(),
         since=digest.since.isoformat(),
@@ -102,7 +103,7 @@ def mark_catchup_seen(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("view_digest")),
 ) -> DigestSeenResponse:
-    state = mark_digest_seen(db)
+    state = mark_digest_seen(db, current_user.id)
     return DigestSeenResponse(
         last_seen_at=state["last_seen_at"],
         last_digest_viewed_at=state["last_digest_viewed_at"],
@@ -114,7 +115,7 @@ def rebuild_catchup_digest(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("view_digest")),
 ) -> CatchupDigestResponse:
-    digest = generate_catchup_digest(db, get_effective_settings())
+    digest = generate_catchup_digest(db, get_effective_settings(), current_user.id)
     return CatchupDigestResponse(
         generated_at=digest.generated_at.isoformat(),
         since=digest.since.isoformat(),

@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -8,20 +7,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
-SECRET_SETTING_KEYS = {
-    "imap_password",
-    "smtp_password",
-    "openai_api_key",
-    "bootstrap_admin_password",
-}
 
 
 class Settings(BaseSettings):
     app_name: str = Field(default="Orhun Mail Agent", alias="APP_NAME")
     app_env: str = Field(default="development", alias="APP_ENV")
     debug: bool = Field(default=True, alias="DEBUG")
+    secret_key: str = Field(default="", alias="SECRET_KEY")
     database_url: str = Field(default=f"sqlite:///{(DATA_DIR / 'mail_agent.db').as_posix()}", alias="DATABASE_URL")
-    dev_auth_bypass: bool = Field(default=False, alias="DEV_AUTH_BYPASS")
+    port: int = Field(default=8000, alias="PORT")
     bootstrap_default_admin: bool = Field(default=False, alias="BOOTSTRAP_DEFAULT_ADMIN")
     bootstrap_admin_email: str = Field(default="admin@orhun.local", alias="BOOTSTRAP_ADMIN_EMAIL")
     bootstrap_admin_password: str = Field(default="", alias="BOOTSTRAP_ADMIN_PASSWORD")
@@ -37,17 +31,20 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     smtp_use_ssl: bool = Field(default=True, alias="SMTP_USE_SSL")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
     deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
     interface_language: str = Field(default="ru", alias="INTERFACE_LANGUAGE")
     summary_language: str = Field(default="ru", alias="SUMMARY_LANGUAGE")
     scan_since_date: str | None = Field(default=None, alias="SCAN_SINCE_DATE")
     signature: str = Field(default="", alias="SIGNATURE")
+    ai_analysis_enabled: bool = Field(default=True, alias="AI_ANALYSIS_ENABLED")
     ai_auto_spam_enabled: bool = Field(default=True, alias="AI_AUTO_SPAM_ENABLED")
     ai_max_retries: int = Field(default=3, alias="AI_MAX_RETRIES")
     ai_timeout_seconds: int = Field(default=60, alias="AI_TIMEOUT_SECONDS")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
-    scan_interval_minutes: int = Field(default=5, alias="SCAN_INTERVAL_MINUTES")
+    scheduler_interval_minutes: int = Field(default=5, alias="SCHEDULER_INTERVAL_MINUTES")
+    max_emails_per_scan: int = Field(default=200, alias="MAX_EMAILS_PER_SCAN")
     followup_overdue_days: int = Field(default=3, alias="FOLLOWUP_OVERDUE_DAYS")
     catchup_absence_hours: int = Field(default=8, alias="CATCHUP_ABSENCE_HOURS")
     sent_review_batch_limit: int = Field(default=20, alias="SENT_REVIEW_BATCH_LIMIT")
@@ -83,118 +80,46 @@ settings = Settings()
 
 
 def load_runtime_settings() -> dict[str, Any]:
-    from app.db import open_account_session
-    from app.models.runtime_setting import RuntimeSetting
+    from app.db import open_global_session
+    from app.services.settings_service import load_runtime_settings as load_runtime_settings_from_db
 
-    db = open_account_session()
+    db = open_global_session()
     try:
-        row = db.query(RuntimeSetting).order_by(RuntimeSetting.id.desc()).first()
-        if row is None:
-            return {}
-        return _runtime_setting_to_dict(row)
+        return load_runtime_settings_from_db(db)
     finally:
         db.close()
 
 
 def save_runtime_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    from app.db import open_account_session
-    from app.models.runtime_setting import RuntimeSetting
+    from app.db import open_global_session
+    from app.services.settings_service import save_runtime_settings as save_runtime_settings_to_db
 
-    db = open_account_session()
+    db = open_global_session()
     try:
-        row = db.query(RuntimeSetting).order_by(RuntimeSetting.id.desc()).first()
-        if row is None:
-            row = RuntimeSetting()
-            db.add(row)
-
-        for key, value in updates.items():
-            if value is None:
-                continue
-            _apply_runtime_setting_update(row, key, value)
-
+        payload = save_runtime_settings_to_db(db, updates)
         db.commit()
-        db.refresh(row)
-        return _runtime_setting_to_dict(row)
+        return payload
     finally:
         db.close()
 
 
 def get_effective_settings() -> SimpleNamespace:
-    merged = settings.model_dump()
-    merged.update(load_runtime_settings())
-    merged["auto_spam_enabled"] = bool(merged.get("ai_auto_spam_enabled", False))
-    return SimpleNamespace(**merged)
+    from app.db import open_global_session
+    from app.services.settings_service import build_effective_settings
+
+    db = open_global_session()
+    try:
+        return build_effective_settings(settings, db)
+    finally:
+        db.close()
 
 
 def get_safe_settings_view() -> dict[str, Any]:
-    effective = get_effective_settings()
-    payload = vars(effective).copy()
-    for key in SECRET_SETTING_KEYS:
-        payload.pop(key, None)
+    from app.db import open_global_session
+    from app.services.settings_service import get_safe_settings_view as build_safe_settings_view
 
-    payload["has_imap_password"] = bool(getattr(effective, "imap_password", None))
-    payload["has_smtp_password"] = bool(getattr(effective, "smtp_password", None))
-    payload["has_openai_api_key"] = bool(getattr(effective, "openai_api_key", None))
-    payload["auto_spam_enabled"] = bool(getattr(effective, "ai_auto_spam_enabled", False))
-    payload["ai_auto_spam_enabled"] = payload["auto_spam_enabled"]
-    return payload
-
-
-def _runtime_setting_to_dict(row: Any) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "app_name": row.app_name,
-        "app_env": row.app_env,
-        "debug": row.debug,
-        "imap_host": row.imap_host,
-        "imap_port": row.imap_port,
-        "imap_user": row.imap_user,
-        "imap_password": row.imap_password,
-        "smtp_host": row.smtp_host,
-        "smtp_port": row.smtp_port,
-        "smtp_user": row.smtp_user,
-        "smtp_password": row.smtp_password,
-        "smtp_use_tls": row.smtp_use_tls,
-        "smtp_use_ssl": row.smtp_use_ssl,
-        "openai_api_key": row.openai_api_key,
-        "deepseek_base_url": row.deepseek_base_url,
-        "deepseek_model": row.deepseek_model,
-        "interface_language": row.interface_language,
-        "summary_language": row.summary_language,
-        "scan_since_date": row.scan_since_date,
-        "signature": row.signature,
-        "ai_auto_spam_enabled": row.ai_auto_spam_enabled,
-        "auto_spam_enabled": row.ai_auto_spam_enabled,
-        "ai_max_retries": row.ai_max_retries,
-        "ai_timeout_seconds": row.ai_timeout_seconds,
-        "redis_url": row.redis_url,
-        "scan_interval_minutes": row.scan_interval_minutes,
-        "followup_overdue_days": row.followup_overdue_days,
-        "catchup_absence_hours": row.catchup_absence_hours,
-        "sent_review_batch_limit": row.sent_review_batch_limit,
-        "run_background_jobs": row.run_background_jobs,
-        "run_mail_watchers": row.run_mail_watchers,
-    }
-    cors_value = row.cors_origins_json
-    if cors_value:
-        try:
-            payload["cors_origins"] = json.loads(cors_value)
-        except Exception:  # noqa: BLE001
-            payload["cors_origins"] = []
-    return {key: value for key, value in payload.items() if value is not None}
-
-
-def _apply_runtime_setting_update(row: Any, key: str, value: Any) -> None:
-    if key == "cors_origins":
-        row.cors_origins_json = json.dumps(value, ensure_ascii=False)
-        return
-    if key == "auto_spam_enabled":
-        key = "ai_auto_spam_enabled"
-    if key == "scan_since_date" and isinstance(value, str):
-        normalized = value.strip()
-        setattr(row, key, normalized or None)
-        return
-    if key in {"interface_language", "summary_language"} and isinstance(value, str):
-        setattr(row, key, value.strip().lower())
-        return
-    if hasattr(row, key):
-        setattr(row, key, value)
+    db = open_global_session()
+    try:
+        return build_safe_settings_view(settings, db)
+    finally:
+        db.close()

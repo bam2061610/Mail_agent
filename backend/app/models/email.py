@@ -1,13 +1,29 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
+EMAIL_STATUS_VALUES = (
+    "new",
+    "read",
+    "reply_later",
+    "processed",
+    "replied",
+    "archived",
+    "spam",
+)
+
 
 class Email(Base):
     __tablename__ = "emails"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('new','read','reply_later','processed','replied','archived','spam')",
+            name="ck_emails_status_valid",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     message_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -15,7 +31,7 @@ class Email(Base):
     mailbox_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mailbox_address: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     imap_uid: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
-    thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     subject: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sender_email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     sender_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -25,8 +41,8 @@ class Email(Base):
     body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     folder: Mapped[str] = mapped_column(String(100), default="inbox", nullable=False)
-    direction: Mapped[str] = mapped_column(String(50), default="inbound", nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="new", nullable=False)
+    direction: Mapped[str] = mapped_column(String(50), default="inbound", nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(50), default="new", nullable=False, index=True)
     priority: Mapped[str | None] = mapped_column(String(50), nullable=True)
     importance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -46,6 +62,7 @@ class Email(Base):
     preferred_reply_language: Mapped[str | None] = mapped_column(String(10), nullable=True)
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     requires_reply: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    awaiting_response: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     assigned_to_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     assigned_by_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+EmailStatus = Literal["new", "read", "reply_later", "processed", "replied", "archived", "spam"]
 
 
 class EmailListItem(BaseModel):
@@ -16,12 +18,13 @@ class EmailListItem(BaseModel):
     mailbox_address: str | None = None
     imap_uid: str | None = None
     date_received: datetime | None = None
-    status: str
+    status: EmailStatus
     priority: str | None = None
     importance_score: int | None = None
     category: str | None = None
     ai_analyzed: bool
     requires_reply: bool
+    awaiting_response: bool = False
     is_spam: bool
     spam_source: str | None = None
     spam_reason: str | None = None
@@ -72,11 +75,11 @@ class EmailCreateDraftRequest(BaseModel):
 
 
 class EmailUpdateStatusRequest(BaseModel):
-    status: str
+    status: EmailStatus
 
 
 class EmailStatusUpdateRequest(BaseModel):
-    status: str
+    status: EmailStatus
 
 
 class EmailReplyLaterRequest(BaseModel):
@@ -179,6 +182,8 @@ class DraftGenerationResponse(BaseModel):
 
 
 class AttachmentItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     email_id: int
     filename: str | None = None
@@ -186,6 +191,7 @@ class AttachmentItem(BaseModel):
     size_bytes: int
     content_id: str | None = None
     is_inline: bool = False
+    storage_mode: str = "imap"
     created_at: datetime
 
 

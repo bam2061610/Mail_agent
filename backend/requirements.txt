@@ -11,3 +11,6 @@ psycopg[binary]>=3.2,<3.3
 pytest>=8.3,<8.4
 httpx>=0.28,<0.29
 reportlab>=4.3,<4.4
+bcrypt>=4.2,<5
+slowapi>=0.1.9,<0.2
+tenacity>=9.0,<10

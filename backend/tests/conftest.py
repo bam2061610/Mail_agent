@@ -34,7 +34,6 @@ def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str,
 
     monkeypatch.setattr(rule_engine, "RULES_FILE_PATH", data_dir / "rules.json")
     monkeypatch.setattr(template_service, "TEMPLATES_FILE_PATH", data_dir / "templates.json")
-    monkeypatch.setattr(preference_profile, "PREFERENCE_PROFILE_PATH", data_dir / "preference_profile.json")
     monkeypatch.setattr(digest_service, "STATE_FILE_PATH", data_dir / "digest_state.json")
     monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", attachments_dir)
 
