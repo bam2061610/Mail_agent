@@ -108,6 +108,8 @@ export function App() {
   const [editingMailboxId, setEditingMailboxId] = useState<string | null>(null);
   const [mailboxForm, setMailboxForm] = useState<MailboxFormState>(initialMailboxForm);
   const [loadingList, setLoadingList] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+  const [aiModel, setAiModel] = useState("DeepSeek-V4-Flash");
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [mailActionLoading, setMailActionLoading] = useState<string | null>(null);
   const [appError, setAppError] = useState("");
@@ -196,6 +198,7 @@ export function App() {
         setAutoSpamEnabled(settings.auto_spam_enabled ?? true);
         setFollowupOverdueDays(String(settings.followup_overdue_days ?? 3));
         setScanSinceDate(normalizeDateInput(settings.scan_since_date));
+        setAiModel(settings.deepseek_model || "DeepSeek-V4-Flash");
       })
       .catch(() => {
         setSettingsSignature("");
@@ -203,6 +206,7 @@ export function App() {
         setAutoSpamEnabled(true);
         setFollowupOverdueDays("3");
         setScanSinceDate("");
+        setAiModel("DeepSeek-V4-Flash");
       });
   }, [currentUser]);
 
@@ -588,6 +592,32 @@ export function App() {
     }
   }
 
+  async function triggerScan() {
+    setAppError("");
+    setAppSuccess("");
+    setScanLoading(true);
+    try {
+      await apiPost("/api/scan", {});
+      await loadEmails();
+      setAppSuccess(t("app.syncComplete", { defaultValue: "Mailbox synced." }));
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not sync mailbox."));
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
+  async function saveAiModel(model: string) {
+    setAppError("");
+    try {
+      await apiPost("/api/settings", { deepseek_model: model });
+      setAiModel(model);
+      setAppSuccess(t("app.aiModelSaved", { defaultValue: "AI model updated." }));
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not save AI model."));
+    }
+  }
+
   async function saveSummaryLanguage(language: "ru" | "en" | "tr") {
     setAppError("");
     try {
@@ -807,8 +837,8 @@ export function App() {
           </div>
           <div className="topbar-actions">
             {view !== "settings" ? (
-              <button className="button button-ghost" type="button" onClick={() => void loadEmails()} disabled={loadingList}>
-                ↻
+              <button className="button button-ghost" type="button" onClick={() => void triggerScan()} disabled={scanLoading || loadingList} title="Sync mailbox now">
+                {scanLoading ? "⟳" : "↻"}
               </button>
             ) : null}
             <div className="user-chip">{currentUser.full_name || currentUser.email}</div>
@@ -863,6 +893,8 @@ export function App() {
             onMailboxTest={(mailboxId) => void testMailbox(mailboxId)}
             onLogout={() => void handleLogout()}
             actionLoading={actionLoading}
+            aiModel={aiModel}
+            onAiModelSave={(model) => void saveAiModel(model)}
           />
         ) : (
           <div className="mail-layout">

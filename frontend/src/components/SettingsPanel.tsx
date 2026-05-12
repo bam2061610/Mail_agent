@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MailboxFormState, MailboxItem, UserItem } from "../types";
 import { Badge } from "./common/Badge";
@@ -33,11 +34,15 @@ type SettingsPanelProps = {
   onMailboxTest: (mailboxId: string) => void;
   onLogout: () => void;
   actionLoading: string | null;
+  aiModel: string;
+  onAiModelSave: (model: string) => void;
 };
 
 export function SettingsPanel(props: SettingsPanelProps) {
   const { t } = useTranslation();
   const canManageMailboxes = props.currentUser?.role === "admin";
+  const [aiModelDraft, setAiModelDraft] = useState(props.aiModel);
+  useEffect(() => { setAiModelDraft(props.aiModel); }, [props.aiModel]);
 
   return (
     <section className="settings-panel">
@@ -132,6 +137,29 @@ export function SettingsPanel(props: SettingsPanelProps) {
             disabled={props.savingSignature}
           >
             {t("settings.saveSignature")}
+          </button>
+        </div>
+      </div>
+      <div className="settings-card">
+        <div className="panel-copy">
+          <h3>AI Model</h3>
+          <p>DeepSeek model name used for email analysis.</p>
+        </div>
+        <div className="settings-scan-form" style={{ gap: "8px", display: "flex", flexDirection: "row", alignItems: "flex-end" }}>
+          <Field label="Model" full>
+            <input
+              value={aiModelDraft}
+              onChange={(event) => setAiModelDraft(event.target.value)}
+              placeholder="DeepSeek-V4-Flash"
+            />
+          </Field>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => props.onAiModelSave(aiModelDraft.trim() || "DeepSeek-V4-Flash")}
+            style={{ flexShrink: 0 }}
+          >
+            Save
           </button>
         </div>
       </div>
