@@ -170,14 +170,14 @@ export function SettingsPanel(props: SettingsPanelProps) {
       <div className="settings-card settings-signature-card">
         <div className="panel-copy">
           <h3>Spam Detection Prompt</h3>
-          <p>Custom instructions for the AI to classify spam. Leave empty to use the default. Example: "Mark as spam if sender is from unknown domain not in contacts."</p>
+          <p>AI prompt for spam classification. Edit to customize. What you see below is the currently active prompt.</p>
         </div>
         <div className="settings-signature-form">
           <textarea
-            rows={4}
+            rows={5}
             value={spamPromptDraft}
             onChange={(event) => setSpamPromptDraft(event.target.value)}
-            placeholder="Leave empty to use default spam detection rules."
+            placeholder="Loading..."
           />
           <button
             className="button button-secondary"

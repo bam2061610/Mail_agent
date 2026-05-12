@@ -181,12 +181,17 @@ def scan_single_mailbox(
 def get_spam_prompt(
     current_user: User = Depends(require_permission("read")),
 ) -> dict:
+    from app.services.ai_analyzer import DEFAULT_SPAM_PROMPT
     db = open_global_session()
     try:
-        prompt = get_setting(db, "custom_spam_prompt") or ""
+        custom = get_setting(db, "custom_spam_prompt") or ""
     finally:
         db.close()
-    return {"spam_prompt": prompt}
+    return {
+        "spam_prompt": custom,
+        "default_spam_prompt": DEFAULT_SPAM_PROMPT,
+        "effective_spam_prompt": custom.strip() if custom.strip() else DEFAULT_SPAM_PROMPT,
+    }
 
 
 @router.post("/settings/spam-prompt")

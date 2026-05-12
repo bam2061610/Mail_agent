@@ -209,8 +209,8 @@ export function App() {
         setScanSinceDate("");
         setAiModel("DeepSeek-V4-Flash");
       });
-    apiGet<{ spam_prompt: string }>("/api/settings/spam-prompt")
-      .then((data) => setSpamPrompt(data.spam_prompt || ""))
+    apiGet<{ spam_prompt: string; effective_spam_prompt: string }>("/api/settings/spam-prompt")
+      .then((data) => setSpamPrompt(data.effective_spam_prompt || data.spam_prompt || ""))
       .catch(() => setSpamPrompt(""));
   }, [currentUser]);
 
