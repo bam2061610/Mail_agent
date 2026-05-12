@@ -118,15 +118,15 @@ def _log_startup_stage(message: str, **fields: object) -> None:
 
 
 def _migrate_deepseek_model() -> None:
-    """Auto-migrate deepseek_model from 'deepseek-chat' to 'DeepSeek-V4-Flash' on startup."""
+    """Auto-migrate deepseek_model from 'deepseek-chat' to 'deepseek-v4-flash' on startup."""
     from app.services.settings_service import get_runtime_settings_row
     db = open_global_session()
     try:
         row = get_runtime_settings_row(db)
         if row is not None and row.deepseek_model in (None, "", "deepseek-chat"):
-            row.deepseek_model = "DeepSeek-V4-Flash"
+            row.deepseek_model = "deepseek-v4-flash"
             db.commit()
-            logger.info("Migrated deepseek_model to DeepSeek-V4-Flash")
+            logger.info("Migrated deepseek_model to deepseek-v4-flash")
     except Exception:  # noqa: BLE001
         logger.warning("Failed to migrate deepseek_model", exc_info=True)
     finally:

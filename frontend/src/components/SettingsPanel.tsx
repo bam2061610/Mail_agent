@@ -154,13 +154,13 @@ export function SettingsPanel(props: SettingsPanelProps) {
             <input
               value={aiModelDraft}
               onChange={(event) => setAiModelDraft(event.target.value)}
-              placeholder="DeepSeek-V4-Flash"
+              placeholder="deepseek-v4-flash"
             />
           </Field>
           <button
             className="button button-secondary"
             type="button"
-            onClick={() => props.onAiModelSave(aiModelDraft.trim() || "DeepSeek-V4-Flash")}
+            onClick={() => props.onAiModelSave(aiModelDraft.trim() || "deepseek-v4-flash")}
             style={{ flexShrink: 0 }}
           >
             Save

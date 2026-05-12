@@ -109,7 +109,7 @@ export function App() {
   const [mailboxForm, setMailboxForm] = useState<MailboxFormState>(initialMailboxForm);
   const [loadingList, setLoadingList] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
-  const [aiModel, setAiModel] = useState("DeepSeek-V4-Flash");
+  const [aiModel, setAiModel] = useState("deepseek-v4-flash");
   const [spamPrompt, setSpamPrompt] = useState("");
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [mailActionLoading, setMailActionLoading] = useState<string | null>(null);
@@ -199,7 +199,7 @@ export function App() {
         setAutoSpamEnabled(settings.auto_spam_enabled ?? true);
         setFollowupOverdueDays(String(settings.followup_overdue_days ?? 3));
         setScanSinceDate(normalizeDateInput(settings.scan_since_date));
-        setAiModel(settings.deepseek_model || "DeepSeek-V4-Flash");
+        setAiModel(settings.deepseek_model || "deepseek-v4-flash");
       })
       .catch(() => {
         setSettingsSignature("");
@@ -207,7 +207,7 @@ export function App() {
         setAutoSpamEnabled(true);
         setFollowupOverdueDays("3");
         setScanSinceDate("");
-        setAiModel("DeepSeek-V4-Flash");
+        setAiModel("deepseek-v4-flash");
       });
     apiGet<{ spam_prompt: string; effective_spam_prompt: string }>("/api/settings/spam-prompt")
       .then((data) => setSpamPrompt(data.effective_spam_prompt || data.spam_prompt || ""))

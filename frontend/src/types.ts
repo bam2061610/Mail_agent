@@ -353,7 +353,7 @@ export const initialSetupAccountForm: SetupAccountFormState = {
 };
 export const initialSetupAiForm: SetupAiFormState = {
   deepseek_api_key: "",
-  deepseek_model: "DeepSeek-V4-Flash",
+  deepseek_model: "deepseek-v4-flash",
   deepseek_base_url: "https://api.deepseek.com",
 };
 export const initialSetupMailboxForm: SetupMailboxFormState = {
