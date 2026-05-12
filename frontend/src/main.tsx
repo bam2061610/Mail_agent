@@ -110,6 +110,7 @@ export function App() {
   const [loadingList, setLoadingList] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [aiModel, setAiModel] = useState("DeepSeek-V4-Flash");
+  const [spamPrompt, setSpamPrompt] = useState("");
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [mailActionLoading, setMailActionLoading] = useState<string | null>(null);
   const [appError, setAppError] = useState("");
@@ -208,6 +209,9 @@ export function App() {
         setScanSinceDate("");
         setAiModel("DeepSeek-V4-Flash");
       });
+    apiGet<{ spam_prompt: string }>("/api/settings/spam-prompt")
+      .then((data) => setSpamPrompt(data.spam_prompt || ""))
+      .catch(() => setSpamPrompt(""));
   }, [currentUser]);
 
   const resetMailboxEditor = useCallback(() => {
@@ -618,6 +622,17 @@ export function App() {
     }
   }
 
+  async function saveSpamPrompt(prompt: string) {
+    setAppError("");
+    try {
+      await apiPost("/api/settings/spam-prompt", { spam_prompt: prompt });
+      setSpamPrompt(prompt);
+      setAppSuccess(t("app.spamPromptSaved", { defaultValue: "Spam prompt saved." }));
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not save spam prompt."));
+    }
+  }
+
   async function saveSummaryLanguage(language: "ru" | "en" | "tr") {
     setAppError("");
     try {
@@ -895,6 +910,8 @@ export function App() {
             actionLoading={actionLoading}
             aiModel={aiModel}
             onAiModelSave={(model) => void saveAiModel(model)}
+            spamPrompt={spamPrompt}
+            onSpamPromptSave={(prompt) => void saveSpamPrompt(prompt)}
           />
         ) : (
           <div className="mail-layout">

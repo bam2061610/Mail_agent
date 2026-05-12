@@ -36,6 +36,8 @@ type SettingsPanelProps = {
   actionLoading: string | null;
   aiModel: string;
   onAiModelSave: (model: string) => void;
+  spamPrompt: string;
+  onSpamPromptSave: (prompt: string) => void;
 };
 
 export function SettingsPanel(props: SettingsPanelProps) {
@@ -43,6 +45,8 @@ export function SettingsPanel(props: SettingsPanelProps) {
   const canManageMailboxes = props.currentUser?.role === "admin";
   const [aiModelDraft, setAiModelDraft] = useState(props.aiModel);
   useEffect(() => { setAiModelDraft(props.aiModel); }, [props.aiModel]);
+  const [spamPromptDraft, setSpamPromptDraft] = useState(props.spamPrompt);
+  useEffect(() => { setSpamPromptDraft(props.spamPrompt); }, [props.spamPrompt]);
 
   return (
     <section className="settings-panel">
@@ -158,6 +162,27 @@ export function SettingsPanel(props: SettingsPanelProps) {
             type="button"
             onClick={() => props.onAiModelSave(aiModelDraft.trim() || "DeepSeek-V4-Flash")}
             style={{ flexShrink: 0 }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+      <div className="settings-card settings-signature-card">
+        <div className="panel-copy">
+          <h3>Spam Detection Prompt</h3>
+          <p>Custom instructions for the AI to classify spam. Leave empty to use the default. Example: "Mark as spam if sender is from unknown domain not in contacts."</p>
+        </div>
+        <div className="settings-signature-form">
+          <textarea
+            rows={4}
+            value={spamPromptDraft}
+            onChange={(event) => setSpamPromptDraft(event.target.value)}
+            placeholder="Leave empty to use default spam detection rules."
+          />
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => props.onSpamPromptSave(spamPromptDraft)}
           >
             Save
           </button>

@@ -231,10 +231,25 @@ def _summary_language_name(value: str | None, fallback: str = "ru") -> str:
     return SUMMARY_LANGUAGE_NAMES.get(normalized, SUMMARY_LANGUAGE_NAMES[fallback])
 
 
-def build_system_prompt(config, preference_block: str | None = None, *, summary_language: str | None = None) -> str:
+DEFAULT_SPAM_PROMPT = (
+    "Also classify spam. Mark `is_spam` true for obvious spam, marketing blasts, phishing, "
+    "mass promotional mailings with unsubscribe links, tracking pixels, or UTM parameters, "
+    "promotional offers the user did not request, and phishing patterns. "
+    'Return `is_spam` as a JSON boolean and explain it in JSON field "spam_reason".'
+)
+
+
+def build_system_prompt(
+    config,
+    preference_block: str | None = None,
+    *,
+    summary_language: str | None = None,
+    custom_spam_prompt: str | None = None,
+) -> str:
     summary_language_name = _summary_language_name(
         summary_language or getattr(config, "summary_language", None) or getattr(config, "interface_language", None)
     )
+    spam_section = custom_spam_prompt.strip() if custom_spam_prompt and custom_spam_prompt.strip() else DEFAULT_SPAM_PROMPT
     base_prompt = (
         "You are an email assistant for Orhun Medical, a network of medical centers "
         "in Kazakhstan. You analyze incoming and outgoing business emails and provide structured analysis. "
@@ -250,10 +265,7 @@ def build_system_prompt(config, preference_block: str | None = None, *, summary_
         "4-6 = normal business correspondence; "
         "1-3 = informational, no action needed (newsletters, notifications). "
         'Return the score as JSON field "importance_score". '
-        "Also classify spam. Mark `is_spam` true for obvious spam, marketing blasts, phishing, "
-        "mass promotional mailings with unsubscribe links, tracking pixels, or UTM parameters, "
-        "promotional offers the user did not request, and phishing patterns. "
-        'Return `is_spam` as a JSON boolean and explain it in JSON field "spam_reason". '
+        f"{spam_section} "
         "For outgoing/sent emails: determine `awaiting_response` — whether Orhun Medical expects a reply from the recipient. "
         "awaiting_response=true if the email contains a question, information request, meeting proposal, or confirmation request. "
         "awaiting_response=false if it is an FYI notification, confirmation, or informational broadcast."
@@ -325,8 +337,9 @@ def analyze_email(
     config,
     preference_block: str | None = None,
     summary_language: str | None = None,
+    custom_spam_prompt: str | None = None,
 ) -> AnalysisResult:
-    system_prompt = build_system_prompt(config, preference_block=preference_block, summary_language=summary_language)
+    system_prompt = build_system_prompt(config, preference_block=preference_block, summary_language=summary_language, custom_spam_prompt=custom_spam_prompt)
     user_payload = build_user_payload(
         email_record,
         thread_history,
@@ -421,6 +434,8 @@ def generate_followup_draft(
 
 def analyze_pending(db_session: Session, config, limit: int | None = None) -> AnalyzePendingSummary:
     preference_block = build_preference_prompt_block(get_preference_profile(db_session))
+    from app.services.settings_service import get_setting
+    custom_spam_prompt: str | None = get_setting(db_session, "custom_spam_prompt") or None
     query = (
         db_session.query(Email)
         .filter(or_(Email.ai_analyzed.is_(False), Email.ai_analyzed.is_(None)))
@@ -448,6 +463,7 @@ def analyze_pending(db_session: Session, config, limit: int | None = None) -> An
                 config,
                 preference_block=preference_block,
                 summary_language=getattr(config, "summary_language", None),
+                custom_spam_prompt=custom_spam_prompt,
             )
             save_analysis_result(db_session, email_record, result, config=config)
             analyzed_count += 1

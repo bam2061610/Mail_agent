@@ -2,6 +2,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.config import get_safe_settings_view, save_runtime_settings
 from app.core.api_errors import api_error
@@ -27,7 +28,12 @@ from app.services.mailbox_service import (
     update_mailbox,
 )
 from app.services.permission_service import require_permission
+from app.services.settings_service import get_setting, set_setting
 from app.services.smtp_sender import test_smtp_connection
+
+
+class SpamPromptUpdate(BaseModel):
+    spam_prompt: str
 
 router = APIRouter(prefix="/api", tags=["settings"])
 logger = logging.getLogger(__name__)
@@ -169,6 +175,32 @@ def scan_single_mailbox(
     finally:
         db.close()
     return OperationStatusResponse()
+
+
+@router.get("/settings/spam-prompt")
+def get_spam_prompt(
+    current_user: User = Depends(require_permission("read")),
+) -> dict:
+    db = open_global_session()
+    try:
+        prompt = get_setting(db, "custom_spam_prompt") or ""
+    finally:
+        db.close()
+    return {"spam_prompt": prompt}
+
+
+@router.post("/settings/spam-prompt")
+def save_spam_prompt(
+    body: SpamPromptUpdate,
+    current_user: User = Depends(require_permission("manage_settings")),
+) -> dict:
+    db = open_global_session()
+    try:
+        set_setting(db, "custom_spam_prompt", body.spam_prompt.strip())
+        db.commit()
+    finally:
+        db.close()
+    return {"spam_prompt": body.spam_prompt.strip()}
 
 
 def _log_mailbox_action(action_type: str, payload: dict, user: User | None = None) -> None:

@@ -2,6 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Archive, Ban, Clock, Sparkles } from "lucide-react";
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s{3,}/g, "  ")
+    .trim();
+}
 import type { AttachmentItem, EmailItem } from "../types";
 import { Badge } from "./common/Badge";
 import { Field } from "./common/Field";
@@ -184,9 +199,7 @@ export function EmailDetail(props: EmailDetailProps) {
                 <span>{message.date_received ? new Date(message.date_received).toLocaleString() : ""}</span>
               </summary>
               <div className="thread-body">
-                {message.ai_summary ? <div className="thread-note">{message.ai_summary}</div> : null}
-                <div className="thread-label">{t("detail.originalMessage")}</div>
-                <p className="thread-text">{message.body_text || message.body_html || t("queue.noPreview")}</p>
+                <p className="thread-text">{message.body_text || (message.body_html ? stripHtml(message.body_html) : "") || t("queue.noPreview")}</p>
               </div>
             </details>
           );
@@ -289,7 +302,7 @@ export function EmailDetail(props: EmailDetailProps) {
               </div>
               <div className="summary-badges">
                 <ImportanceBadge score={selected.importance_score} label={t("detail.importance")} />
-                {selected.requires_reply ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
+                {selected.requires_reply && !selected.is_spam ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
               </div>
             </div>
             <p className={`detail-summary-copy${summaryText ? "" : " is-fallback"}`} title={summaryText || summaryFallback}>

@@ -183,7 +183,7 @@ export function EmailList(props: EmailListProps) {
             <div className="email-row-title-copy">
               <div className="email-row-subject-line">
                 <h4 title={email.subject || t("queue.noSubject")}>{email.subject || t("queue.noSubject")}</h4>
-                {email.requires_reply ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
+                {email.requires_reply && !email.is_spam ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
               </div>
               <p title={email.sender_name || email.sender_email || t("queue.unknownSender")}>{email.sender_name || email.sender_email || t("queue.unknownSender")}</p>
             </div>
