@@ -247,7 +247,7 @@ export type MessageTemplate = {
   id: string;
   name: string;
   category: string;
-  language: "ru" | "en" | "tr";
+  language: "ru" | "en" | "kz";
   subject_template?: string | null;
   body_template: string;
   enabled: boolean;
@@ -258,7 +258,7 @@ export type MessageTemplate = {
 export type TemplateFormState = {
   name: string;
   category: string;
-  language: "ru" | "en" | "tr";
+  language: "ru" | "en" | "kz";
   subject_template: string;
   body_template: string;
 };

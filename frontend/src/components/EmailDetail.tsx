@@ -32,14 +32,14 @@ type EmailDetailProps = {
   loading: boolean;
   actionLoading: string | null;
   draftText: string;
-  replyLanguage: "ru" | "en" | "tr";
+  replyLanguage: "ru" | "en" | "kz";
   replyTo: string;
   replyCc: string;
   replyBcc: string;
   replySubject: string;
   replyPrompt: string;
   replySignature: string;
-  summaryLanguage: "ru" | "en" | "tr";
+  summaryLanguage: "ru" | "en" | "kz";
   onClose: () => void;
   onModeChange: (mode: "read" | "reply") => void;
   onDraftChange: (value: string) => void;
@@ -49,9 +49,9 @@ type EmailDetailProps = {
   onReplySubjectChange: (value: string) => void;
   onReplyPromptChange: (value: string) => void;
   onReplySignatureChange: (value: string) => void;
-  onReplyLanguageChange: (value: "ru" | "en" | "tr") => void;
+  onReplyLanguageChange: (value: "ru" | "en" | "kz") => void;
   onGenerateDraft: () => void;
-  onTranslateDraft: (lang: "ru" | "en" | "tr") => void;
+  onTranslateDraft: (lang: "ru" | "en" | "kz") => void;
   onSendReply: () => void;
   onRegenerateSummary: () => void;
   onArchive: () => void;
@@ -66,11 +66,11 @@ function splitValue(value: string): string[] {
     .filter(Boolean);
 }
 
-function normalizeLanguageCode(value?: string | null): "ru" | "en" | "tr" | null {
+function normalizeLanguageCode(value?: string | null): "ru" | "en" | "kz" | null {
   const normalized = (value || "").trim().toLowerCase();
   if (normalized === "ru" || normalized === "russian") return "ru";
   if (normalized === "en" || normalized === "english") return "en";
-  if (normalized === "tr" || normalized === "turkish") return "tr";
+  if (normalized === "kz" || normalized === "kazakh") return "kz";
   return null;
 }
 
@@ -123,7 +123,7 @@ export function EmailDetail(props: EmailDetailProps) {
   const detectedLanguage = selected ? normalizeLanguageCode(selected.detected_source_language) : null;
   const hasSelectedSummary = Boolean(selected?.ai_summary);
   const shouldOfferSummaryRefresh = Boolean(selected && (isOutbound || !hasSelectedSummary || (detectedLanguage && detectedLanguage !== props.summaryLanguage)));
-  const summaryLanguageLabelKey = props.summaryLanguage === "ru" ? "settings.russian" : props.summaryLanguage === "tr" ? "settings.turkish" : "settings.english";
+  const summaryLanguageLabelKey = props.summaryLanguage === "ru" ? "settings.russian" : props.summaryLanguage === "kz" ? "settings.kazakh" : "settings.english";
   const summaryActionLabel = hasSelectedSummary
     ? t("detail.regenerateSummary", { language: t(summaryLanguageLabelKey) })
     : t("detail.generateSummary");
@@ -350,7 +350,7 @@ export function EmailDetail(props: EmailDetailProps) {
                     <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("en")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
                       {t("detail.translateEn")}
                     </button>
-                    <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("tr")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
+                    <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("kz")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
                       {t("detail.translateTr")}
                     </button>
                     <button className="button button-secondary" type="button" onClick={props.onGenerateDraft} disabled={props.actionLoading === "draft"}>

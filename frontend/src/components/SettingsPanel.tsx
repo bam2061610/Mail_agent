@@ -8,7 +8,7 @@ import { SummaryPoint } from "./common/SummaryPoint";
 type SettingsPanelProps = {
   currentUser: UserItem | null;
   language: string;
-  onLanguageChange: (language: "ru" | "en" | "tr") => void;
+  onLanguageChange: (language: "ru" | "en" | "kz") => void;
   autoSpamEnabled: boolean;
   onAutoSpamChange: (value: boolean) => void;
   followupOverdueDays: string;
@@ -71,9 +71,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
             RU
           </button>
           <button
-            className={`button button-ghost${props.language === "tr" ? " is-active" : ""}`}
+            className={`button button-ghost${props.language === "kz" ? " is-active" : ""}`}
             type="button"
-            onClick={() => props.onLanguageChange("tr")}
+            onClick={() => props.onLanguageChange("kz")}
           >
             TR
           </button>

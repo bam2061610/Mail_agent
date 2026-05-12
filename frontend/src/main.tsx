@@ -36,10 +36,10 @@ function buildReplySubject(subject?: string | null): string {
   return subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
 }
 
-function normalizeReplyLanguage(value?: string | null): "ru" | "en" | "tr" {
+function normalizeReplyLanguage(value?: string | null): "ru" | "en" | "kz" {
   const normalized = (value || "").trim().toLowerCase();
   if (normalized === "en" || normalized === "english") return "en";
-  if (normalized === "tr" || normalized === "turkish") return "tr";
+  if (normalized === "kz" || normalized === "kazakh") return "kz";
   if (normalized === "ru" || normalized === "russian") return "ru";
   return "ru";
 }
@@ -88,7 +88,7 @@ export function App() {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [search, setSearch] = useState("");
   const [draftText, setDraftText] = useState("");
-  const [replyLanguage, setReplyLanguage] = useState<"ru" | "en" | "tr">("ru");
+  const [replyLanguage, setReplyLanguage] = useState<"ru" | "en" | "kz">("ru");
   const [replyTo, setReplyTo] = useState("");
   const [replyCc, setReplyCc] = useState("");
   const [replyBcc, setReplyBcc] = useState("");
@@ -96,7 +96,7 @@ export function App() {
   const [replyPrompt, setReplyPrompt] = useState("");
   const [replySignature, setReplySignature] = useState("");
   const [settingsSignature, setSettingsSignature] = useState("");
-  const [summaryLanguage, setSummaryLanguage] = useState<"ru" | "en" | "tr">("ru");
+  const [summaryLanguage, setSummaryLanguage] = useState<"ru" | "en" | "kz">("ru");
   const [autoSpamEnabled, setAutoSpamEnabled] = useState(true);
   const [followupOverdueDays, setFollowupOverdueDays] = useState("3");
   const [scanSinceDate, setScanSinceDate] = useState("");
@@ -311,7 +311,7 @@ export function App() {
   );
 
   const generateDraftForEmail = useCallback(
-    async (emailId: number, options?: { targetLanguage?: "ru" | "en" | "tr"; customPrompt?: string; showSuccess?: boolean }) => {
+    async (emailId: number, options?: { targetLanguage?: "ru" | "en" | "kz"; customPrompt?: string; showSuccess?: boolean }) => {
       setMailActionLoading("draft");
       setDraftText("");
       try {
@@ -514,7 +514,7 @@ export function App() {
     }
   }
 
-  async function translateDraft(targetLang: "ru" | "en" | "tr") {
+  async function translateDraft(targetLang: "ru" | "en" | "kz") {
     if (!selectedEmailId || !draftText.trim()) return;
     setAppError("");
     setMailActionLoading("draft");
@@ -633,7 +633,7 @@ export function App() {
     }
   }
 
-  async function saveSummaryLanguage(language: "ru" | "en" | "tr") {
+  async function saveSummaryLanguage(language: "ru" | "en" | "kz") {
     setAppError("");
     try {
       await apiPost("/api/settings", {
@@ -641,7 +641,7 @@ export function App() {
         summary_language: language,
       });
       setSummaryLanguage(language);
-      setAppSuccess(language === "ru" ? "Язык изменен." : language === "tr" ? "Dil güncellendi." : "Language updated.");
+      setAppSuccess(language === "ru" ? "Язык изменен." : language === "kz" ? "Тіл жаңартылды." : "Language updated.");
     } catch (error) {
       setAppError(getErrorMessage(error, "Could not save language preference."));
     }
@@ -872,7 +872,7 @@ export function App() {
         {view === "settings" ? (
           <SettingsPanel
             currentUser={currentUser}
-            language={i18n.language.startsWith("ru") ? "ru" : i18n.language.startsWith("tr") ? "tr" : "en"}
+            language={i18n.language.startsWith("ru") ? "ru" : i18n.language.startsWith("kz") ? "kz" : "en"}
             onLanguageChange={(language) => {
               void i18n.changeLanguage(language);
               void saveSummaryLanguage(language);
