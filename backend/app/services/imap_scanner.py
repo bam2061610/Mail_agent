@@ -112,7 +112,7 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
         raise ImapError(str(exc)) from exc
 
 
-MAX_INITIAL_SCAN_DAYS = 14
+MAX_INITIAL_SCAN_DAYS = 7
 
 
 def _parse_scan_since_date(raw_value) -> datetime | None:
