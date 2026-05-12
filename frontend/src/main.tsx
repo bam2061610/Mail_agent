@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
-import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, getErrorMessage, isSetupRequiredError } from "./api";
+import { apiDelete, apiGet, apiPost, apiPut, buildReplyPayload, downloadFile, getErrorMessage, isSetupRequiredError } from "./api";
 import { useAuth } from "./hooks/useAuth";
 import { LoginScreen } from "./components/LoginScreen";
 import { SetupWizard } from "./components/SetupWizard";
@@ -596,6 +596,15 @@ export function App() {
     }
   }
 
+  async function downloadAttachment(attachmentId: number, filename: string) {
+    setAppError("");
+    try {
+      await downloadFile(`/api/attachments/${attachmentId}/download`, filename);
+    } catch (error) {
+      setAppError(getErrorMessage(error, "Could not download attachment."));
+    }
+  }
+
   async function triggerScan() {
     setAppError("");
     setAppSuccess("");
@@ -966,6 +975,7 @@ export function App() {
           onTranslateDraft={(lang) => void translateDraft(lang)}
           onSendReply={() => void sendReply()}
           onRegenerateSummary={() => void regenerateSummary()}
+          onDownloadAttachment={(id, name) => void downloadAttachment(id, name)}
           onArchive={() => selectedEmailId ? void updateStatus(selectedEmailId, "archived", t("success.archived")) : undefined}
           onSpam={() => selectedEmailId ? void updateStatus(selectedEmailId, "spam", t("success.movedSpam")) : undefined}
           onReplyLater={() => selectedEmailId ? void moveReplyLater(selectedEmailId) : undefined}

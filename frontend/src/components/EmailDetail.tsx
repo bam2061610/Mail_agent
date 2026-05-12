@@ -54,6 +54,7 @@ type EmailDetailProps = {
   onTranslateDraft: (lang: "ru" | "en" | "kz") => void;
   onSendReply: () => void;
   onRegenerateSummary: () => void;
+  onDownloadAttachment: (attachmentId: number, filename: string) => void;
   onArchive: () => void;
   onSpam: () => void;
   onReplyLater: () => void;
@@ -218,7 +219,21 @@ export function EmailDetail(props: EmailDetailProps) {
       </div>
       <div className="attachment-strip">
         {props.attachments.length ? (
-          props.attachments.map((item) => <Badge key={item.id}>{item.filename || item.content_type || "Attachment"}</Badge>)
+          props.attachments.map((item) => {
+            const name = item.filename || item.content_type || "attachment";
+            const sizeKb = item.size_bytes > 0 ? ` (${Math.round(item.size_bytes / 1024) || 1} KB)` : "";
+            return (
+              <button
+                key={item.id}
+                className="button button-ghost attachment-download-btn"
+                type="button"
+                title={`Download ${name}`}
+                onClick={() => props.onDownloadAttachment(item.id, name)}
+              >
+                ⬇ {name}{sizeKb}
+              </button>
+            );
+          })
         ) : (
           <span className="helper-text">{t("detail.noAttachments")}</span>
         )}
