@@ -100,7 +100,7 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
         ssl_context.verify_mode = ssl.CERT_NONE
         connection = imaplib.IMAP4_SSL(
             settings.imap_host, settings.imap_port,
-            ssl_context=ssl_context, timeout=60,
+            ssl_context=ssl_context, timeout=120,
         )
         connection.login(imap_username, imap_password)
         return connection
