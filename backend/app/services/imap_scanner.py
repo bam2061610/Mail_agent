@@ -183,13 +183,16 @@ def _scan_folder(
         status, _ = connection.select(folder, readonly=True)
         if status != "OK":
             return 0, 0, 0, 0, [f"Unable to select folder {folder}"]
-    except imaplib.IMAP4.error:
+    except (imaplib.IMAP4.error, imaplib.IMAP4.abort):
         return 0, 0, 0, 0, [f"Folder {folder} does not exist or is not accessible"]
 
     search_criterion = _imap_date_criterion(scan_cutoff)
-    status, data = connection.uid("search", None, search_criterion)
-    if status != "OK":
-        return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
+    try:
+        status, data = connection.uid("search", None, search_criterion)
+        if status != "OK":
+            return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
+    except imaplib.IMAP4.abort as exc:
+        return 0, 0, 0, 0, [f"IMAP connection lost during search in {folder}: {exc}"]
 
     message_uids = [uid for uid in data[0].split() if uid]
     max_emails_per_scan = max(1, int(getattr(get_effective_settings(), "max_emails_per_scan", 200) or 200))
@@ -332,9 +335,12 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
     finally:
         try:
             connection.close()
-        except imaplib.IMAP4.error:
+        except (imaplib.IMAP4.error, imaplib.IMAP4.abort, OSError):
             pass
-        connection.logout()
+        try:
+            connection.logout()
+        except (imaplib.IMAP4.error, imaplib.IMAP4.abort, OSError):
+            pass
 
     return ScanSummary(
         mailbox=mailbox_name or mailbox_address or "INBOX",
