@@ -198,12 +198,12 @@ def _scan_folder(
     scanned_messages = len(message_uids)
 
     for uid in message_uids:
-        header_message_id = _fetch_header_message_id(connection, uid)
-        if header_message_id and header_message_id in existing_message_ids:
-            skipped_count += 1
-            continue
-
         try:
+            header_message_id = _fetch_header_message_id(connection, uid)
+            if header_message_id and header_message_id in existing_message_ids:
+                skipped_count += 1
+                continue
+
             raw_message = _fetch_full_message(connection, uid)
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
@@ -226,6 +226,10 @@ def _scan_folder(
                 existing_message_ids.add(result.message_id)
             else:
                 skipped_count += 1
+        except imaplib.IMAP4.abort as exc:
+            logger.warning("IMAP connection aborted during scan uid=%s folder=%s: %s", uid, folder, exc)
+            errors.append(f"IMAP connection lost mid-scan: {exc}")
+            break  # Connection is dead; stop processing this folder
         except Exception as exc:  # noqa: BLE001
             db_session.rollback()
             logger.warning("IMAP folder scan failed: folder=%s", folder, exc_info=True)
