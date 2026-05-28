@@ -173,6 +173,7 @@ def _scan_folder(
     existing_message_ids: set[str],
     scan_cutoff: datetime,
     direction: str = "inbound",
+    connect_fn=None,
 ) -> tuple[int, int, int, int, list[str]]:
     """Scan a single IMAP folder. Returns (scanned, fetched, created, skipped, errors)."""
     errors: list[str] = []
@@ -215,7 +216,21 @@ def _scan_folder(
                 skipped_count += 1
                 continue
 
-            raw_message = _fetch_full_message(connection, uid)
+            try:
+                raw_message = _fetch_full_message(connection, uid)
+            except imaplib.IMAP4.abort:
+                if connect_fn is None:
+                    raise
+                # Reconnect and retry this UID once with a fresh SSL session
+                try:
+                    connection = connect_fn()
+                    connection.select(folder, readonly=True)
+                    raw_message = _fetch_full_message(connection, uid)
+                    logger.info("Reconnect succeeded for uid=%s folder=%s", uid, folder)
+                except Exception as retry_exc:
+                    logger.warning("uid=%s folder=%s: skipped after reconnect failure: %s", uid, folder, retry_exc)
+                    errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: skipped after reconnect failure")
+                    continue
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
             parsed_message.imap_uid = uid.decode("utf-8", errors="ignore") or None
@@ -315,11 +330,14 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
     existing_message_ids = _load_existing_message_ids(db_session, mailbox_id)
     scan_cutoff = _resolve_scan_since_cutoff(settings)
 
+    connect_fn = lambda: connect_imap(settings)  # noqa: E731
+
     try:
         # Scan INBOX (inbound)
         s, f, c, sk, errs = _scan_folder(
             connection, db_session, "INBOX", str(mailbox_id),
             mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="inbound",
+            connect_fn=connect_fn,
         )
         scanned_messages += s
         fetched_messages += f
@@ -334,6 +352,7 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
             s, f, c, sk, errs = _scan_folder(
                 connection, db_session, sent_folder, str(mailbox_id),
                 mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="sent",
+                connect_fn=connect_fn,
             )
             scanned_messages += s
             fetched_messages += f
