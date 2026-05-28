@@ -1,6 +1,7 @@
 import hashlib
 import imaplib
 import json
+import re
 import ssl
 import logging
 from dataclasses import asdict, dataclass
@@ -200,9 +201,16 @@ def _scan_folder(
         message_uids = message_uids[-max_emails_per_scan:]
     scanned_messages = len(message_uids)
 
+    # Fetch all Message-ID headers in ONE IMAP command to avoid N round-trips
+    # that cause Exchange to drop the connection mid-scan.
+    try:
+        uid_to_message_id = _batch_fetch_message_ids(connection, message_uids)
+    except imaplib.IMAP4.abort as exc:
+        return scanned_messages, 0, 0, 0, [f"IMAP connection lost fetching headers in {folder}: {exc}"]
+
     for uid in message_uids:
         try:
-            header_message_id = _fetch_header_message_id(connection, uid)
+            header_message_id = uid_to_message_id.get(uid)
             if header_message_id and header_message_id in existing_message_ids:
                 skipped_count += 1
                 continue
@@ -620,6 +628,29 @@ def _fetch_header_message_id(connection: imaplib.IMAP4_SSL, uid: bytes) -> str |
 
     header_message = BytesParser(policy=policy.default).parsebytes(raw_header)
     return _normalize_message_identifier(header_message.get("Message-ID"))
+
+
+def _batch_fetch_message_ids(connection: imaplib.IMAP4_SSL, uids: list[bytes]) -> dict[bytes, str | None]:
+    """Fetch Message-ID headers for all UIDs in ONE IMAP command instead of N separate commands."""
+    if not uids:
+        return {}
+    uid_set = b",".join(uids)
+    status, data = connection.uid("fetch", uid_set, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+    if status != "OK" or not data:
+        return {}
+    result: dict[bytes, str | None] = {}
+    for item in data:
+        if not isinstance(item, tuple) or len(item) < 2:
+            continue
+        header_info = item[0] if isinstance(item[0], bytes) else b""
+        header_bytes = item[1] if isinstance(item[1], bytes) else b""
+        uid_match = re.search(rb"\bUID\s+(\d+)\b", header_info)
+        if not uid_match:
+            continue
+        uid = uid_match.group(1)
+        header_msg = BytesParser(policy=policy.default).parsebytes(header_bytes)
+        result[uid] = _normalize_message_identifier(header_msg.get("Message-ID"))
+    return result
 
 
 def _fetch_full_message(connection: imaplib.IMAP4_SSL, uid: bytes) -> bytes:
