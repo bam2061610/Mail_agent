@@ -2,6 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Archive, Ban, Clock, Sparkles } from "lucide-react";
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s{3,}/g, "  ")
+    .trim();
+}
 import type { AttachmentItem, EmailItem } from "../types";
 import { Badge } from "./common/Badge";
 import { Field } from "./common/Field";
@@ -17,14 +32,14 @@ type EmailDetailProps = {
   loading: boolean;
   actionLoading: string | null;
   draftText: string;
-  replyLanguage: "ru" | "en" | "tr";
+  replyLanguage: "ru" | "en" | "kz";
   replyTo: string;
   replyCc: string;
   replyBcc: string;
   replySubject: string;
   replyPrompt: string;
   replySignature: string;
-  summaryLanguage: "ru" | "en" | "tr";
+  summaryLanguage: "ru" | "en" | "kz";
   onClose: () => void;
   onModeChange: (mode: "read" | "reply") => void;
   onDraftChange: (value: string) => void;
@@ -34,11 +49,12 @@ type EmailDetailProps = {
   onReplySubjectChange: (value: string) => void;
   onReplyPromptChange: (value: string) => void;
   onReplySignatureChange: (value: string) => void;
-  onReplyLanguageChange: (value: "ru" | "en" | "tr") => void;
+  onReplyLanguageChange: (value: "ru" | "en" | "kz") => void;
   onGenerateDraft: () => void;
-  onTranslateDraft: (lang: "ru" | "en" | "tr") => void;
+  onTranslateDraft: (lang: "ru" | "en" | "kz") => void;
   onSendReply: () => void;
   onRegenerateSummary: () => void;
+  onDownloadAttachment: (attachmentId: number, filename: string) => void;
   onArchive: () => void;
   onSpam: () => void;
   onReplyLater: () => void;
@@ -51,11 +67,11 @@ function splitValue(value: string): string[] {
     .filter(Boolean);
 }
 
-function normalizeLanguageCode(value?: string | null): "ru" | "en" | "tr" | null {
+function normalizeLanguageCode(value?: string | null): "ru" | "en" | "kz" | null {
   const normalized = (value || "").trim().toLowerCase();
   if (normalized === "ru" || normalized === "russian") return "ru";
   if (normalized === "en" || normalized === "english") return "en";
-  if (normalized === "tr" || normalized === "turkish") return "tr";
+  if (normalized === "kz" || normalized === "kazakh") return "kz";
   return null;
 }
 
@@ -108,7 +124,7 @@ export function EmailDetail(props: EmailDetailProps) {
   const detectedLanguage = selected ? normalizeLanguageCode(selected.detected_source_language) : null;
   const hasSelectedSummary = Boolean(selected?.ai_summary);
   const shouldOfferSummaryRefresh = Boolean(selected && (isOutbound || !hasSelectedSummary || (detectedLanguage && detectedLanguage !== props.summaryLanguage)));
-  const summaryLanguageLabelKey = props.summaryLanguage === "ru" ? "settings.russian" : props.summaryLanguage === "tr" ? "settings.turkish" : "settings.english";
+  const summaryLanguageLabelKey = props.summaryLanguage === "ru" ? "settings.russian" : props.summaryLanguage === "kz" ? "settings.kazakh" : "settings.english";
   const summaryActionLabel = hasSelectedSummary
     ? t("detail.regenerateSummary", { language: t(summaryLanguageLabelKey) })
     : t("detail.generateSummary");
@@ -194,9 +210,7 @@ export function EmailDetail(props: EmailDetailProps) {
                 <span>{message.date_received ? new Date(message.date_received).toLocaleString() : ""}</span>
               </summary>
               <div className="thread-body">
-                {message.ai_summary ? <div className="thread-note">{message.ai_summary}</div> : null}
-                <div className="thread-label">{t("detail.originalMessage")}</div>
-                <p className="thread-text">{message.body_text || message.body_html || t("queue.noPreview")}</p>
+                <p className="thread-text">{message.body_text || (message.body_html ? stripHtml(message.body_html) : "") || t("queue.noPreview")}</p>
               </div>
             </details>
           );
@@ -215,7 +229,21 @@ export function EmailDetail(props: EmailDetailProps) {
       </div>
       <div className="attachment-strip">
         {props.attachments.length ? (
-          props.attachments.map((item) => <Badge key={item.id}>{item.filename || item.content_type || "Attachment"}</Badge>)
+          props.attachments.map((item) => {
+            const name = item.filename || item.content_type || "attachment";
+            const sizeKb = item.size_bytes > 0 ? ` (${Math.round(item.size_bytes / 1024) || 1} KB)` : "";
+            return (
+              <button
+                key={item.id}
+                className="button button-ghost attachment-download-btn"
+                type="button"
+                title={`Download ${name}`}
+                onClick={() => props.onDownloadAttachment(item.id, name)}
+              >
+                ⬇ {name}{sizeKb}
+              </button>
+            );
+          })
         ) : (
           <span className="helper-text">{t("detail.noAttachments")}</span>
         )}
@@ -299,7 +327,7 @@ export function EmailDetail(props: EmailDetailProps) {
               </div>
               <div className="summary-badges">
                 <ImportanceBadge score={selected.importance_score} label={t("detail.importance")} />
-                {selected.requires_reply ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
+                {selected.requires_reply && !selected.is_spam ? <Badge tone="danger">{t("queue.needsReply")}</Badge> : null}
               </div>
             </div>
             <p className={`detail-summary-copy${summaryText ? "" : " is-fallback"}`} title={summaryText || summaryFallback}>
@@ -347,7 +375,7 @@ export function EmailDetail(props: EmailDetailProps) {
                     <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("en")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
                       {t("detail.translateEn")}
                     </button>
-                    <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("tr")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
+                    <button className="button button-ghost" type="button" onClick={() => props.onTranslateDraft("kz")} disabled={props.actionLoading === "draft" || !props.draftText.trim()}>
                       {t("detail.translateTr")}
                     </button>
                     <button className="button button-secondary" type="button" onClick={props.onGenerateDraft} disabled={props.actionLoading === "draft"}>

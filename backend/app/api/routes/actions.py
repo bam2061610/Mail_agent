@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from app.config import get_effective_settings
@@ -267,27 +267,70 @@ def download_attachment_by_id(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("read")),
 ):
+    from app.services.attachment_service import build_content_disposition_header, fetch_attachment_from_imap
+    from app.services.mailbox_service import get_mailbox, to_runtime_mailbox
+    import mimetypes
+
     attachment = get_attachment(db, attachment_id)
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Try local file first (legacy attachments stored on disk)
+    local_path = attachment.local_storage_path
+    if local_path:
+        from pathlib import Path
+        p = Path(local_path)
+        if p.exists() and p.is_file():
+            try:
+                _, _, media_type, headers = build_attachment_download_payload(attachment)
+                db.add(ActionLog(
+                    email_id=attachment.email_id,
+                    action_type="attachment_downloaded",
+                    user_id=current_user.id,
+                    actor=current_user.email,
+                    details_json=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename}, ensure_ascii=False),
+                ))
+                db.commit()
+                return FileResponse(path=str(p), media_type=media_type, headers=headers)
+            except Exception:
+                pass
+
+    # Fetch on-demand from IMAP
+    email_record = db.query(Email).filter(Email.id == attachment.email_id).first()
+    if email_record is None:
+        raise HTTPException(status_code=404, detail="Parent email not found")
+
+    mailbox_data = get_mailbox(str(email_record.mailbox_id), redact_secrets=False) if email_record.mailbox_id else None
+    if mailbox_data is None:
+        raise HTTPException(status_code=404, detail="Mailbox configuration not found for this attachment")
+
+    mailbox_config = to_runtime_mailbox(mailbox_data)
+    folder = email_record.folder or "INBOX"
+
     try:
-        file_path, _, media_type, headers = build_attachment_download_payload(attachment)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Attachment file missing")
-    db.add(
-        ActionLog(
-            email_id=attachment.email_id,
-            action_type="attachment_downloaded",
-            user_id=current_user.id,
-            actor=current_user.email,
-            details_json=json.dumps({"attachment_id": attachment.id, "filename": attachment.filename}, ensure_ascii=False),
-        )
-    )
+        content, filename, content_type = fetch_attachment_from_imap(attachment, mailbox_config, folder=folder)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"Attachment not found on mail server: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not fetch attachment from mail server: {exc}") from exc
+
+    if not content_type or content_type == "application/octet-stream":
+        guessed = mimetypes.guess_type(filename or "")[0]
+        content_type = guessed or "application/octet-stream"
+
+    db.add(ActionLog(
+        email_id=attachment.email_id,
+        action_type="attachment_downloaded",
+        user_id=current_user.id,
+        actor=current_user.email,
+        details_json=json.dumps({"attachment_id": attachment.id, "filename": filename}, ensure_ascii=False),
+    ))
     db.commit()
-    return FileResponse(
-        path=str(file_path),
-        media_type=media_type,
-        headers=headers,
+
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Content-Disposition": build_content_disposition_header(filename or "attachment")},
     )
 
 

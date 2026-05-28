@@ -117,6 +117,22 @@ def _log_startup_stage(message: str, **fields: object) -> None:
         logger.info(message)
 
 
+def _migrate_deepseek_model() -> None:
+    """Auto-migrate deepseek_model from 'deepseek-chat' to 'deepseek-v4-flash' on startup."""
+    from app.services.settings_service import get_runtime_settings_row
+    db = open_global_session()
+    try:
+        row = get_runtime_settings_row(db)
+        if row is not None and row.deepseek_model in (None, "", "deepseek-chat"):
+            row.deepseek_model = "deepseek-v4-flash"
+            db.commit()
+            logger.info("Migrated deepseek_model to deepseek-v4-flash")
+    except Exception:  # noqa: BLE001
+        logger.warning("Failed to migrate deepseek_model", exc_info=True)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.debug)
@@ -143,6 +159,7 @@ async def lifespan(app: FastAPI):
     _log_startup_stage("Table creation/check complete")
     ensure_default_admin()
     _log_startup_stage("Default admin ensured")
+    _migrate_deepseek_model()
     runtime_settings = get_effective_settings()
     db = open_global_session()
     try:

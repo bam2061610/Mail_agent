@@ -116,7 +116,7 @@
     "generating": "Generating...",
     "translateRu": "Translate to RU",
     "translateEn": "Translate to EN",
-    "translateTr": "Translate to TR",
+    "translateTr": "Translate to KZ",
     "draftPlaceholder": "Draft reply...",
     "sendDraft": "Send draft",
     "sending": "Sending...",
@@ -220,7 +220,8 @@
     "smtpSsl": "Use SSL",
     "savingMailbox": "Saving...",
     "updateMailbox": "Update mailbox",
-    "addMailbox": "Add mailbox"
+    "addMailbox": "Add mailbox",
+    "kazakh": "Қазақша"
   },
   "focus": {
     "loadHint": "Load the queue to see the current operating picture.",
@@ -286,12 +287,12 @@
       "title": "Waiting queue",
       "subtitle": "Track outbound conversations, overdue threads, and suggested follow-ups."
     },
-  "spam": {
-    "aiAuto": "AI auto",
-    "manual": "Manual",
-    "title": "Spam review log",
-    "subtitle": "Audit blocked messages, see AI or rule source, and restore mistakes quickly."
-  },
+    "spam": {
+      "aiAuto": "AI auto",
+      "manual": "Manual",
+      "title": "Spam review log",
+      "subtitle": "Audit blocked messages, see AI or rule source, and restore mistakes quickly."
+    },
     "reports": {
       "title": "Reports and exports",
       "subtitle": "Generate period-based activity and follow-up reports, then export or email them."

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { MailboxFormState, MailboxItem, UserItem } from "../types";
 import { Badge } from "./common/Badge";
@@ -7,7 +8,7 @@ import { SummaryPoint } from "./common/SummaryPoint";
 type SettingsPanelProps = {
   currentUser: UserItem | null;
   language: string;
-  onLanguageChange: (language: "ru" | "en" | "tr") => void;
+  onLanguageChange: (language: "ru" | "en" | "kz") => void;
   autoSpamEnabled: boolean;
   onAutoSpamChange: (value: boolean) => void;
   followupOverdueDays: string;
@@ -33,11 +34,19 @@ type SettingsPanelProps = {
   onMailboxTest: (mailboxId: string) => void;
   onLogout: () => void;
   actionLoading: string | null;
+  aiModel: string;
+  onAiModelSave: (model: string) => void;
+  spamPrompt: string;
+  onSpamPromptSave: (prompt: string) => void;
 };
 
 export function SettingsPanel(props: SettingsPanelProps) {
   const { t } = useTranslation();
   const canManageMailboxes = props.currentUser?.role === "admin";
+  const [aiModelDraft, setAiModelDraft] = useState(props.aiModel);
+  useEffect(() => { setAiModelDraft(props.aiModel); }, [props.aiModel]);
+  const [spamPromptDraft, setSpamPromptDraft] = useState(props.spamPrompt);
+  useEffect(() => { setSpamPromptDraft(props.spamPrompt); }, [props.spamPrompt]);
 
   return (
     <section className="settings-panel">
@@ -62,9 +71,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
             RU
           </button>
           <button
-            className={`button button-ghost${props.language === "tr" ? " is-active" : ""}`}
+            className={`button button-ghost${props.language === "kz" ? " is-active" : ""}`}
             type="button"
-            onClick={() => props.onLanguageChange("tr")}
+            onClick={() => props.onLanguageChange("kz")}
           >
             TR
           </button>
@@ -132,6 +141,50 @@ export function SettingsPanel(props: SettingsPanelProps) {
             disabled={props.savingSignature}
           >
             {t("settings.saveSignature")}
+          </button>
+        </div>
+      </div>
+      <div className="settings-card">
+        <div className="panel-copy">
+          <h3>AI Model</h3>
+          <p>DeepSeek model name used for email analysis.</p>
+        </div>
+        <div className="settings-scan-form" style={{ gap: "8px", display: "flex", flexDirection: "row", alignItems: "flex-end" }}>
+          <Field label="Model" full>
+            <input
+              value={aiModelDraft}
+              onChange={(event) => setAiModelDraft(event.target.value)}
+              placeholder="deepseek-v4-flash"
+            />
+          </Field>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => props.onAiModelSave(aiModelDraft.trim() || "deepseek-v4-flash")}
+            style={{ flexShrink: 0 }}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+      <div className="settings-card settings-signature-card">
+        <div className="panel-copy">
+          <h3>Spam Detection Prompt</h3>
+          <p>AI prompt for spam classification. Edit to customize. What you see below is the currently active prompt.</p>
+        </div>
+        <div className="settings-signature-form">
+          <textarea
+            rows={5}
+            value={spamPromptDraft}
+            onChange={(event) => setSpamPromptDraft(event.target.value)}
+            placeholder="Loading..."
+          />
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => props.onSpamPromptSave(spamPromptDraft)}
+          >
+            Save
           </button>
         </div>
       </div>

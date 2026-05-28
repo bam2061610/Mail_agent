@@ -247,7 +247,7 @@ export type MessageTemplate = {
   id: string;
   name: string;
   category: string;
-  language: "ru" | "en" | "tr";
+  language: "ru" | "en" | "kz";
   subject_template?: string | null;
   body_template: string;
   enabled: boolean;
@@ -258,7 +258,7 @@ export type MessageTemplate = {
 export type TemplateFormState = {
   name: string;
   category: string;
-  language: "ru" | "en" | "tr";
+  language: "ru" | "en" | "kz";
   subject_template: string;
   body_template: string;
 };
@@ -353,7 +353,7 @@ export const initialSetupAccountForm: SetupAccountFormState = {
 };
 export const initialSetupAiForm: SetupAiFormState = {
   deepseek_api_key: "",
-  deepseek_model: "deepseek-chat",
+  deepseek_model: "deepseek-v4-flash",
   deepseek_base_url: "https://api.deepseek.com",
 };
 export const initialSetupMailboxForm: SetupMailboxFormState = {

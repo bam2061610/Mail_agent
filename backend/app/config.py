@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     deepseek_base_url: str = Field(default="https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
-    deepseek_model: str = Field(default="deepseek-chat", alias="DEEPSEEK_MODEL")
+    deepseek_model: str = Field(default="deepseek-v4-flash", alias="DEEPSEEK_MODEL")
     interface_language: str = Field(default="ru", alias="INTERFACE_LANGUAGE")
     summary_language: str = Field(default="ru", alias="SUMMARY_LANGUAGE")
     scan_since_date: str | None = Field(default=None, alias="SCAN_SINCE_DATE")

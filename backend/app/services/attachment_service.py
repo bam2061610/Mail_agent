@@ -125,8 +125,13 @@ def save_attachment_metadata(
     saved: list[Attachment] = []
     if not parsed_attachments:
         return saved
+    # Track hashes added within this call to catch in-session duplicates
+    # (the DB query below can't see objects not yet flushed).
+    pending_hashes: set[str] = set()
     for parsed in parsed_attachments:
         content_hash = hashlib.sha256(parsed.payload).hexdigest() if parsed.payload else None
+        if content_hash and content_hash in pending_hashes:
+            continue
         existing = (
             db_session.query(Attachment)
             .filter(Attachment.email_id == email_id, Attachment.content_hash == content_hash)
@@ -137,6 +142,8 @@ def save_attachment_metadata(
         if existing is not None:
             saved.append(existing)
             continue
+        if content_hash:
+            pending_hashes.add(content_hash)
         record = Attachment(
             email_id=email_id,
             filename=parsed.filename,

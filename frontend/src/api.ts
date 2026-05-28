@@ -99,6 +99,20 @@ export async function apiDelete<T = unknown>(url: string): Promise<T> {
   });
 }
 
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  const response = await fetch(buildApiUrl(url), { headers: buildApiHeaders(false) });
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
+
 export async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
   try {
     const response = await fetch(buildApiUrl(url), init);

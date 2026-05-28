@@ -1,6 +1,7 @@
 import hashlib
 import imaplib
 import json
+import re
 import ssl
 import logging
 from dataclasses import asdict, dataclass
@@ -98,7 +99,10 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-        connection = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port, ssl_context=ssl_context)
+        connection = imaplib.IMAP4_SSL(
+            settings.imap_host, settings.imap_port,
+            ssl_context=ssl_context, timeout=120,
+        )
         connection.login(imap_username, imap_password)
         return connection
     except imaplib.IMAP4.error as exc:
@@ -109,7 +113,7 @@ def connect_imap(settings) -> imaplib.IMAP4_SSL:
         raise ImapError(str(exc)) from exc
 
 
-MAX_INITIAL_SCAN_DAYS = 14
+MAX_INITIAL_SCAN_DAYS = 7
 
 
 def _parse_scan_since_date(raw_value) -> datetime | None:
@@ -169,6 +173,7 @@ def _scan_folder(
     existing_message_ids: set[str],
     scan_cutoff: datetime,
     direction: str = "inbound",
+    connect_fn=None,
 ) -> tuple[int, int, int, int, list[str]]:
     """Scan a single IMAP folder. Returns (scanned, fetched, created, skipped, errors)."""
     errors: list[str] = []
@@ -180,13 +185,16 @@ def _scan_folder(
         status, _ = connection.select(folder, readonly=True)
         if status != "OK":
             return 0, 0, 0, 0, [f"Unable to select folder {folder}"]
-    except imaplib.IMAP4.error:
+    except (imaplib.IMAP4.error, imaplib.IMAP4.abort):
         return 0, 0, 0, 0, [f"Folder {folder} does not exist or is not accessible"]
 
     search_criterion = _imap_date_criterion(scan_cutoff)
-    status, data = connection.uid("search", None, search_criterion)
-    if status != "OK":
-        return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
+    try:
+        status, data = connection.uid("search", None, search_criterion)
+        if status != "OK":
+            return 0, 0, 0, 0, [f"Unable to search folder {folder}"]
+    except imaplib.IMAP4.abort as exc:
+        return 0, 0, 0, 0, [f"IMAP connection lost during search in {folder}: {exc}"]
 
     raw_uids = [uid for uid in data[0].split() if uid]
     # Sort UIDs numerically so newest (highest UID) messages are last and
@@ -201,14 +209,47 @@ def _scan_folder(
     message_uids = raw_uids
     scanned_messages = len(message_uids)
 
-    for uid in message_uids:
-        header_message_id = _fetch_header_message_id(connection, uid)
-        if header_message_id and header_message_id in existing_message_ids:
-            skipped_count += 1
-            continue
+    # Fetch all Message-ID headers in ONE IMAP command to avoid N round-trips
+    # that cause Exchange to drop the connection mid-scan.
+    try:
+        uid_to_message_id = _batch_fetch_message_ids(connection, message_uids)
+    except imaplib.IMAP4.abort as exc:
+        return scanned_messages, 0, 0, 0, [f"IMAP connection lost fetching headers in {folder}: {exc}"]
 
+    for uid in message_uids:
         try:
-            raw_message = _fetch_full_message(connection, uid)
+            header_message_id = uid_to_message_id.get(uid)
+            if header_message_id and header_message_id in existing_message_ids:
+                skipped_count += 1
+                continue
+
+            try:
+                raw_message = _fetch_full_message(connection, uid)
+            except imaplib.IMAP4.abort:
+                if connect_fn is None:
+                    raise
+                # Retry 1: reconnect, try full message again
+                try:
+                    connection = connect_fn()
+                    connection.select(folder, readonly=True)
+                    raw_message = _fetch_full_message(connection, uid)
+                    logger.info("Reconnect succeeded for uid=%s folder=%s", uid, folder)
+                except imaplib.IMAP4.abort:
+                    # Retry 2: full body unavailable — fetch headers only so the
+                    # email is recorded in DB and future scans won't retry it
+                    try:
+                        connection = connect_fn()
+                        connection.select(folder, readonly=True)
+                        status, hdata = connection.uid("fetch", uid, "(BODY.PEEK[HEADER])")
+                        header_bytes = _extract_fetch_bytes(hdata) if status == "OK" else None
+                        if not header_bytes:
+                            raise RuntimeError("no header data")
+                        raw_message = header_bytes
+                        logger.warning("uid=%s folder=%s: body unavailable, saved headers only", uid, folder)
+                    except Exception as last_exc:
+                        logger.warning("uid=%s folder=%s: fully skipped: %s", uid, folder, last_exc)
+                        errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: skipped (unavailable)")
+                        continue
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
             parsed_message.imap_uid = uid.decode("utf-8", errors="ignore") or None
@@ -232,6 +273,10 @@ def _scan_folder(
                 existing_message_ids.add(result.message_id)
             else:
                 skipped_count += 1
+        except imaplib.IMAP4.abort as exc:
+            logger.warning("IMAP connection aborted during scan uid=%s folder=%s: %s", uid, folder, exc)
+            errors.append(f"IMAP connection lost mid-scan: {exc}")
+            break  # Connection is dead; stop processing this folder
         except Exception as exc:  # noqa: BLE001
             db_session.rollback()
             logger.warning("IMAP folder scan failed: folder=%s", folder, exc_info=True)
@@ -342,11 +387,14 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
     existing_message_ids = _load_existing_message_ids(db_session, mailbox_id)
     scan_cutoff = _resolve_scan_since_cutoff(settings)
 
+    connect_fn = lambda: connect_imap(settings)  # noqa: E731
+
     try:
         # Scan INBOX (inbound)
         s, f, c, sk, errs = _scan_folder(
             connection, db_session, "INBOX", str(mailbox_id),
             mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="inbound",
+            connect_fn=connect_fn,
         )
         scanned_messages += s
         fetched_messages += f
@@ -361,6 +409,7 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
             s, f, c, sk, errs = _scan_folder(
                 connection, db_session, sent_folder, str(mailbox_id),
                 mailbox_name, mailbox_address, existing_message_ids, scan_cutoff=scan_cutoff, direction="sent",
+                connect_fn=connect_fn,
             )
             scanned_messages += s
             fetched_messages += f
@@ -370,9 +419,12 @@ def scan_inbox(db_session: Session, settings) -> ScanSummary:
     finally:
         try:
             connection.close()
-        except imaplib.IMAP4.error:
+        except (imaplib.IMAP4.error, imaplib.IMAP4.abort, OSError):
             pass
-        connection.logout()
+        try:
+            connection.logout()
+        except (imaplib.IMAP4.error, imaplib.IMAP4.abort, OSError):
+            pass
 
     return ScanSummary(
         mailbox=mailbox_name or mailbox_address or "INBOX",
@@ -652,6 +704,29 @@ def _fetch_header_message_id(connection: imaplib.IMAP4_SSL, uid: bytes) -> str |
 
     header_message = BytesParser(policy=policy.default).parsebytes(raw_header)
     return _normalize_message_identifier(header_message.get("Message-ID"))
+
+
+def _batch_fetch_message_ids(connection: imaplib.IMAP4_SSL, uids: list[bytes]) -> dict[bytes, str | None]:
+    """Fetch Message-ID headers for all UIDs in ONE IMAP command instead of N separate commands."""
+    if not uids:
+        return {}
+    uid_set = b",".join(uids)
+    status, data = connection.uid("fetch", uid_set, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+    if status != "OK" or not data:
+        return {}
+    result: dict[bytes, str | None] = {}
+    for item in data:
+        if not isinstance(item, tuple) or len(item) < 2:
+            continue
+        header_info = item[0] if isinstance(item[0], bytes) else b""
+        header_bytes = item[1] if isinstance(item[1], bytes) else b""
+        uid_match = re.search(rb"\bUID\s+(\d+)\b", header_info)
+        if not uid_match:
+            continue
+        uid = uid_match.group(1)
+        header_msg = BytesParser(policy=policy.default).parsebytes(header_bytes)
+        result[uid] = _normalize_message_identifier(header_msg.get("Message-ID"))
+    return result
 
 
 def _fetch_full_message(connection: imaplib.IMAP4_SSL, uid: bytes) -> bytes:
