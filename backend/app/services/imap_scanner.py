@@ -221,16 +221,28 @@ def _scan_folder(
             except imaplib.IMAP4.abort:
                 if connect_fn is None:
                     raise
-                # Reconnect and retry this UID once with a fresh SSL session
+                # Retry 1: reconnect, try full message again
                 try:
                     connection = connect_fn()
                     connection.select(folder, readonly=True)
                     raw_message = _fetch_full_message(connection, uid)
                     logger.info("Reconnect succeeded for uid=%s folder=%s", uid, folder)
-                except Exception as retry_exc:
-                    logger.warning("uid=%s folder=%s: skipped after reconnect failure: %s", uid, folder, retry_exc)
-                    errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: skipped after reconnect failure")
-                    continue
+                except imaplib.IMAP4.abort:
+                    # Retry 2: full body unavailable — fetch headers only so the
+                    # email is recorded in DB and future scans won't retry it
+                    try:
+                        connection = connect_fn()
+                        connection.select(folder, readonly=True)
+                        status, hdata = connection.uid("fetch", uid, "(BODY.PEEK[HEADER])")
+                        header_bytes = _extract_fetch_bytes(hdata) if status == "OK" else None
+                        if not header_bytes:
+                            raise RuntimeError("no header data")
+                        raw_message = header_bytes
+                        logger.warning("uid=%s folder=%s: body unavailable, saved headers only", uid, folder)
+                    except Exception as last_exc:
+                        logger.warning("uid=%s folder=%s: fully skipped: %s", uid, folder, last_exc)
+                        errors.append(f"UID {uid.decode('utf-8', errors='ignore')}: skipped (unavailable)")
+                        continue
             fetched_messages += 1
             parsed_message = parse_email_message(raw_message)
             parsed_message.imap_uid = uid.decode("utf-8", errors="ignore") or None
